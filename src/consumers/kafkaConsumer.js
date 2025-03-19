@@ -18,7 +18,7 @@ export const runConsumer = async () => {
 					message.key ? message.key.toString() : ''
 				}`
 			);
-			await processMessage(message); // Process the message
+			// await processMessage(message); // Process the message
 		},
 	});
 };
