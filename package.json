@@ -1,23 +1,23 @@
 {
-  "name": "kafka-master",
-  "version": "1.0.0",
-  "main": "src/index.js",
-  "type": "module",
-  "scripts": {
-    "dev": "node src/index.js",
-    "start": "node index.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
-  },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "description": "",
-  "dependencies": {
-    "dotenv": "^16.4.7",
-    "express": "^4.21.2",
-    "kafkajs": "^2.2.4"
-  },
-  "devDependencies": {
-    "prisma": "^6.5.0"
-  }
+	"name": "hse-kafka-master",
+	"version": "1.0.0",
+	"main": "src/index.js",
+	"type": "module",
+	"scripts": {
+		"dev": "node src/index.js",
+		"start": "node index.js",
+		"test": "echo \"Error: no test specified\" && exit 1"
+	},
+	"keywords": [],
+	"author": "",
+	"license": "ISC",
+	"description": "",
+	"dependencies": {
+		"dotenv": "^16.4.7",
+		"express": "^4.21.2",
+		"kafkajs": "^2.2.4"
+	},
+	"devDependencies": {
+		"prisma": "^6.5.0"
+	}
 }
