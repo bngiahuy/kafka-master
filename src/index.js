@@ -24,7 +24,7 @@ const startApp = async () => {
 startApp();
 
 app.use(express.json());
-app.use(apiRateLimitting);
+// app.use(apiRateLimitting);
 app.use('/api', mainRouter);
 app.listen(port, () => {
 	console.log(`Server is running on port ${port}`);

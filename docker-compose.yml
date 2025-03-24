@@ -1,23 +1,58 @@
 services:
-  broker:
-    image: apache/kafka:4.0.0
-    container_name: broker
+  # broker:
+  #   image: apache/kafka:4.0.0
+  #   container_name: broker
+  #   ports:
+  #     - '9092:9092'
+  #     - '9093:9093' # Expose the controller port as well
+  #   environment:
+  #     KAFKA_NODE_ID: 1
+  #     KAFKA_PROCESS_ROLES: broker,controller
+  #     # Listen on all interfaces inside the container
+  #     KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
+  #     KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://${KAFKA_BROKER_ADDRESS}:9092
+  #     KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+  #     KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+  #     KAFKA_CONTROLLER_QUORUM_VOTERS: 1@${KAFKA_BROKER_ADDRESS}:9093
+  #     KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+  #     KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+  #     KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+  #     KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+  #     KAFKA_NUM_PARTITIONS: 3
+  #   volumes:
+  #     - ./kafka_data:/var/lib/kafka/data
+
+  redis:
+    image: redis:7.4.2-alpine
+    container_name: redis
     ports:
-      - '9092:9092'
-      - '9093:9093' # Expose the controller port as well
+      - '6379:6379'
+    # volumes:
+    #   - ./redis_data:/data
+    networks:
+      - backend
+
+  nodeapp:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: nodeapp
+    ports:
+      - '${API_SERVER_PORT}:${API_SERVER_PORT}'
     environment:
-      KAFKA_NODE_ID: 1
-      KAFKA_PROCESS_ROLES: broker,controller
-      # Listen on all interfaces inside the container
-      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://${KAFKA_BROKER_ADDRESS}:9092
-      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
-      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@${KAFKA_BROKER_ADDRESS}:9093
-      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
-      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
-      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
-      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
-      KAFKA_NUM_PARTITIONS: 3
-    volumes:
-      - ./kafka_data:/var/lib/kafka/data
+      KAFKA_BROKER_ADDRESS: ${KAFKA_BROKER_ADDRESS}
+      KAFKA_BROKER_PORT: ${KAFKA_BROKER_PORT}
+      KAFKA_TOPIC_NAME_WORKER: ${KAFKA_TOPIC_NAME_WORKER}
+      KAFKA_TOPIC_NAME_MASTER: ${KAFKA_TOPIC_NAME_MASTER}
+      API_SERVER_PORT: ${API_SERVER_PORT}
+      KAFKA_TOPIC_NAME_WORKER_FREE: ${KAFKA_TOPIC_NAME_WORKER_FREE}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+    depends_on:
+      - redis
+    networks:
+      - backend
+
+networks:
+  backend:
+    driver: bridge
