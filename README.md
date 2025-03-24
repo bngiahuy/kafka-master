@@ -96,3 +96,14 @@ The server will start on the configured port (default: 3001).
 - `npm start` - Start the application in production mode
 
 For more information about the Kafka configuration and message handling, see the `kafkaConfig.js` and `kafkaConsumer.js` files.
+
+## Commands to create topics
+```
+./opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --create --topic master-signal --partitions 10 --replication-factor 1
+
+./opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --create --topic worker-signal --partitions 1 --replication-factor 1
+
+./opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --create --topic worker-connection --partitions 1 --replicatifactor 1
+
+./opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list
+```
