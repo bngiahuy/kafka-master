@@ -40,9 +40,7 @@ KAFKA_BROKER_ADDRESS=localhost
 KAFKA_BROKER_PORT=9092
 KAFKA_TOPIC_NAME_WORKER=work-signal
 KAFKA_TOPIC_NAME_MASTER=master-signal
-
-# Database
-DATABASE_URL="postgresql://user:password@localhost:5432/dbname"
+KAFKA_TOPIC_NAME_WORKER_FREE=worker-connection
 ```
 
 ## Installation

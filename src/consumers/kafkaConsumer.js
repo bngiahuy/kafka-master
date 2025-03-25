@@ -18,6 +18,7 @@ const checkWorkerStatus = () => {
 				// status = 0: worker đang busy
 				// status = -1: worker đã offline
 				if (status !== '0') continue;
+
 				// Lấy thời điểm nhận message cuối cùng của worker
 				const lastSeen = await redis.get(`lastSeen:${workerId}`);
 				console.log(
