@@ -12,16 +12,18 @@ const checkWorkerStatus = () => {
 		try {
 			const workers = await redis.hgetall('worker:status');
 			const now = Date.now();
-			// Duyệt qua từng worker
 			for (const [workerId, status] of Object.entries(workers)) {
-				// Nếu worker đã offline thì bỏ qua
+				// Nếu worker đang busy mà không gửi message nữa => đánh dấu offline
+				// status = 1: worker đang free
+				// status = 0: worker đang busy
+				// status = -1: worker đã offline
 				if (status !== '0') continue;
 				// Lấy thời điểm nhận message cuối cùng của worker
 				const lastSeen = await redis.get(`lastSeen:${workerId}`);
-				// Nếu quá 20s không nhận được message => đánh dấu offline
 				console.log(
 					`⏳ Checking worker ${workerId}, status=${status}, lastSeen=${lastSeen}`
 				);
+				// Nếu quá 20s không nhận được message => đánh dấu offline
 				if (!lastSeen || now - parseInt(lastSeen) > 20000) {
 					console.warn(`⚠️ Worker ${workerId} has offline!`);
 					await redis.hset('worker:status', workerId, '-1');
