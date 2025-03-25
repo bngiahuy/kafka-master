@@ -1,0 +1,6 @@
+aiohttp
+asyncio
+logging
+uuid
+confluent-kafka
+pytz
