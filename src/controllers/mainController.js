@@ -16,3 +16,12 @@ export const sendSignal = async (req, res) => {
 		res.status(500).send('Error sending message to Workers');
 	}
 };
+
+export const getWorkersStatus = async (req, res) => {
+	try {
+		const workersStatus = await redis.hgetall('worker:status');
+		res.status(200).send(workersStatus);
+	} catch (error) {
+		res.status(500).send('Error getting Workers status');
+	}
+};

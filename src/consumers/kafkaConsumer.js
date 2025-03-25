@@ -3,6 +3,7 @@ import redis from '../configs/redisConfig.js';
 import { assignBatches } from '../producers/kafkaProducer.js';
 import 'dotenv/config';
 import logMessage from '../utils/logger.js';
+import { releaseLock } from '../utils/helper.js';
 const consumer = kafka.consumer({
 	groupId: 'master-group',
 });
@@ -84,11 +85,13 @@ export const runConsumer = async () => {
 					`[${workerId} is processing ${batchId} files - ${processing}/${total}`
 				);
 				if (parseInt(processing) === parseInt(total)) {
+					// Release lock and assign new batch to worker
+					await releaseLock(workerId);
 					await redis.hset('worker:status', workerId, '1');
 					await assignBatches(); // Assign new batch to worker
 				}
 			}
 		},
 	});
-	// checkWorkerStatus();
+	checkWorkerStatus();
 };

@@ -5,29 +5,12 @@ import path from 'path';
 import redis from '../configs/redisConfig.js';
 import { randomUUID } from 'crypto';
 import logMessage from '../utils/logger.js';
+import { acquireLock, releaseLock } from '../utils/helper.js';
 const producer = kafka.producer();
 
 const BATCH_DIR = './input_ip_data';
 const BATCH_FILES = fs.readdirSync(BATCH_DIR).filter((f) => f.endsWith('.txt'));
 let batchQueue = [...BATCH_FILES];
-
-const acquireLock = async (workerId, timeout = 1000) => {
-	const lockKey = `lock:worker:${workerId}`;
-	const startTime = Date.now();
-	const result = await redis.set(lockKey, 'locked', 'NX', 'PX', timeout);
-	const endTime = Date.now();
-	console.log(
-		`🚀 ~ acquireLock ~ worker: ${workerId}, result: ${result}, time: ${
-			endTime - startTime
-		}ms`
-	);
-	return result === 'OK';
-};
-
-const releaseLock = async (workerId) => {
-	const lockKey = `lock:worker:${workerId}`;
-	await redis.del(lockKey);
-};
 
 export const assignBatches = async () => {
 	// Tiếp tục xử lý cho đến khi hàng đợi file trống
@@ -136,11 +119,12 @@ export const assignBatches = async () => {
 					`❌ Failed to assign chunk ${chunkId} to ${chosenWorker}:`,
 					err
 				);
-			} finally {
-				// Giải phóng khóa và trả worker về trạng thái sẵn sàng
-				await releaseLock(chosenWorker);
-				await redis.hset('worker:status', chosenWorker, '1');
 			}
+			// finally {
+			// 	// Giải phóng khóa và trả worker về trạng thái sẵn sàng
+			// 	await releaseLock(chosenWorker);
+			// 	await redis.hset('worker:status', chosenWorker, '1');
+			// }
 		});
 
 		// Đợi toàn bộ các chunk của file hiện tại xong mới sang file kế tiếp
