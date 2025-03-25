@@ -4,11 +4,30 @@ import fs from 'fs';
 import path from 'path';
 import redis from '../configs/redisConfig.js';
 import { randomUUID } from 'crypto';
+import logMessage from '../utils/logger.js';
 const producer = kafka.producer();
 
 const BATCH_DIR = './input_ip_data';
 const BATCH_FILES = fs.readdirSync(BATCH_DIR).filter((f) => f.endsWith('.txt'));
 let batchQueue = [...BATCH_FILES];
+
+const acquireLock = async (workerId, timeout = 1000) => {
+	const lockKey = `lock:worker:${workerId}`;
+	const startTime = Date.now();
+	const result = await redis.set(lockKey, 'locked', 'NX', 'PX', timeout);
+	const endTime = Date.now();
+	console.log(
+		`🚀 ~ acquireLock ~ worker: ${workerId}, result: ${result}, time: ${
+			endTime - startTime
+		}ms`
+	);
+	return result === 'OK';
+};
+
+const releaseLock = async (workerId) => {
+	const lockKey = `lock:worker:${workerId}`;
+	await redis.del(lockKey);
+};
 
 export const assignBatches = async () => {
 	// Tiếp tục xử lý cho đến khi hàng đợi file trống
@@ -20,12 +39,12 @@ export const assignBatches = async () => {
 		const lines = fs
 			.readFileSync(filePath, 'utf-8')
 			.split('\n')
-			.map((line) => line.trim())
-			.filter(Boolean);
+			.filter((line) => line.trim());
 
 		// --- Lấy chunkSize từ Redis (mặc định 1000 nếu parse lỗi) ---
 		const chunkSizeRaw = await redis.get('numBatches');
-		const chunkSize = parseInt(chunkSizeRaw, 10) || 1000;
+		// console.log('🚀 ~ assignBatches ~ chunkSizeRaw:', chunkSizeRaw);
+		const chunkSize = parseInt(chunkSizeRaw) || 1000;
 
 		// --- Chia file thành các chunk ---
 		const fileChunks = [];
@@ -40,9 +59,8 @@ export const assignBatches = async () => {
 
 		// --- Gửi song song các chunk cho các worker sẵn sàng ---
 		const chunkPromises = fileChunks.map(async ({ chunkId, chunk }) => {
-			// Lặp vô hạn đến khi tìm được một worker sẵn sàng (status === '1')
 			let chosenWorker = null;
-			while (!chosenWorker) {
+			do {
 				// Lấy danh sách worker và trạng thái
 				const allWorkers = await redis.hgetall('worker:status');
 				// Lọc ra các worker sẵn sàng
@@ -51,23 +69,37 @@ export const assignBatches = async () => {
 					.map(([id]) => id);
 
 				if (readyWorkers.length > 0) {
-					// Chọn ngẫu nhiên 1 worker trong số các worker sẵn sàng
-					const randomIndex = Math.floor(Math.random() * readyWorkers.length);
-					chosenWorker = readyWorkers[randomIndex];
+					// Thử chiếm khóa cho từng worker sẵn sàng
+					for (const worker of readyWorkers) {
+						console.log('🚀 ~ chunkPromises ~ worker:', worker);
+						if (await acquireLock(worker)) {
+							chosenWorker = worker;
 
-					// Đặt trạng thái worker thành "busy" để tránh bị chọn lại
-					await redis.hset('worker:status', chosenWorker, 'busy');
-				} else {
-					// Không có worker nào sẵn sàng, chờ 100ms rồi thử lại
+							// Đặt trạng thái worker thành "busy"
+							await redis.hset('worker:status', chosenWorker, '0');
+							const currentWorkerStatus = await redis.hget(
+								'worker:status',
+								chosenWorker
+							);
+							console.log(
+								`🚀 ~ ${chosenWorker} ~ currentWorkerStatus: ${currentWorkerStatus} `
+							);
+							break;
+						}
+					}
+				}
+
+				if (!chosenWorker) {
+					// Không có worker nào sẵn sàng hoặc không chiếm được khóa, chờ 100ms rồi thử lại
 					await new Promise((r) => setTimeout(r, 100));
 				}
-			}
+			} while (!chosenWorker);
 
 			// Lấy partition cho worker
 			const partitionRaw = await redis.hget('worker:partition', chosenWorker);
 			if (!partitionRaw) {
 				console.warn(`⚠️ No partition assigned to ${chosenWorker}`);
-				// Trả worker về trạng thái sẵn sàng rồi bỏ qua chunk này
+				await releaseLock(chosenWorker);
 				await redis.hset('worker:status', chosenWorker, '1');
 				return;
 			}
@@ -77,12 +109,14 @@ export const assignBatches = async () => {
 				partitions = JSON.parse(partitionRaw);
 			} catch (err) {
 				console.error(`❌ Error parsing partitions for ${chosenWorker}:`, err);
+				await releaseLock(chosenWorker);
 				await redis.hset('worker:status', chosenWorker, '1');
 				return;
 			}
 
 			if (!Array.isArray(partitions) || partitions.length === 0) {
 				console.warn(`⚠️ Invalid partition list for ${chosenWorker}`);
+				await releaseLock(chosenWorker);
 				await redis.hset('worker:status', chosenWorker, '1');
 				return;
 			}
@@ -94,7 +128,6 @@ export const assignBatches = async () => {
 			try {
 				// Gửi chunk lên Kafka
 				await runProducer(chosenWorker, chunkId, chunk, partition);
-
 				console.log(
 					`✅ Sent batch ${chunkId} to ${chosenWorker} via partition ${partition} of topic ${process.env.KAFKA_TOPIC_NAME_MASTER}`
 				);
@@ -104,7 +137,8 @@ export const assignBatches = async () => {
 					err
 				);
 			} finally {
-				// Dù thành công hay lỗi, trả worker về lại '1' (sẵn sàng)
+				// Giải phóng khóa và trả worker về trạng thái sẵn sàng
+				await releaseLock(chosenWorker);
 				await redis.hset('worker:status', chosenWorker, '1');
 			}
 		});
@@ -112,14 +146,11 @@ export const assignBatches = async () => {
 		// Đợi toàn bộ các chunk của file hiện tại xong mới sang file kế tiếp
 		await Promise.all(chunkPromises);
 		console.log(`✅ Hoàn thành file: ${currentBatchFile}\n`);
-		// ------------- Ghi log ra file "processed_batches.log" -------------
+
+		// --- Ghi log ra file "processed_batches.log" ---
 		try {
-			fs.appendFileSync(
-				'processed_batches.log',
-				`${new Date().toISOString()} - Processed file: ${currentBatchFile}\n`,
-				'utf-8'
-			);
-			console.log(
+			logMessage('Batch đã xử lý: ' + currentBatchFile);
+			logMessage(
 				`📝 Đã ghi log file "${currentBatchFile}" vào processed_batches.log`
 			);
 		} catch (err) {
@@ -154,7 +185,6 @@ const runProducer = async (workerId, batchId, ipList, partition) => {
 		console.error(`❌ Failed to send to ${workerId}:`, err);
 		throw err;
 	}
-
 	await producer.disconnect();
 };
 

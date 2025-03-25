@@ -2,6 +2,7 @@ import kafka from '../configs/kafkaConfig.js';
 import redis from '../configs/redisConfig.js';
 import { assignBatches } from '../producers/kafkaProducer.js';
 import 'dotenv/config';
+import logMessage from '../utils/logger.js';
 const consumer = kafka.consumer({
 	groupId: 'master-group',
 });
@@ -79,7 +80,9 @@ export const runConsumer = async () => {
 				}
 				await redis.hset('worker:processing', batchId, processing);
 				await redis.set(`lastSeen:${workerId}`, Date.now());
-				console.log(`🚀 [${workerId}] Processing ${processing}/${total}`);
+				logMessage(
+					`[${workerId} is processing ${batchId} files - ${processing}/${total}`
+				);
 				if (parseInt(processing) === parseInt(total)) {
 					await redis.hset('worker:status', workerId, '1');
 					await assignBatches(); // Assign new batch to worker
@@ -87,5 +90,5 @@ export const runConsumer = async () => {
 			}
 		},
 	});
-	checkWorkerStatus();
+	// checkWorkerStatus();
 };
