@@ -125,6 +125,8 @@ export const runConsumer = async () => {
 		stopMonitoring = checkWorkerStatus();
 
 		await consumer.run({
+			// Để giảm số lượng message xử lý đồng thời, bạn có thể thay đổi giá trị này
+			partitionsConsumedConcurrently: 10, // Điều chỉnh dựa trên giới hạn API
 			eachMessage: async ({ topic, partition, message }) => {
 				// console.log(`\n📩 Received message on topic "${topic}", partition ${partition}`);
 				let data;
@@ -205,6 +207,9 @@ export const runConsumer = async () => {
 					// console.log(`   -> Updated lastSeen for ${workerId}`);
 
 					// --- Log progress ---
+					console.log(
+						`${workerId} progress ${batchId}: ${processedCount}/${totalCount}`
+					);
 					logMessage(
 						`${workerId} progress ${batchId}: ${processedCount}/${totalCount}`
 					);

@@ -61,6 +61,7 @@ KAFKA_TOPIC_NAME_WORKER_FREE=worker-connection  # Workers -> Master (registratio
 * **GET /api/getNumBatches**: Get current batch size setting
 * **GET /api/updateNumBatches?numBatches=N**: Update batch size configuration
 * **GET /api/getPartitions**: Get Kafka partition information
+* **GET /api/updatePartitions?value=N**: Update Kafka partition number (supports only master-signal topic).
 
 ## Running the System
 - Create a folder named `input_ip_data` inside the project folder.

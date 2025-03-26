@@ -102,7 +102,7 @@ export const startBatchAssigner = async () => {
 
 			// --- Logic chia chunk và gán worker (giữ nguyên phần lớn) ---
 			const chunkSizeRaw = await redis.get('numBatches');
-			const chunkSize = parseInt(chunkSizeRaw) || 100;
+			const chunkSize = parseInt(chunkSizeRaw) || 1000;
 			const fileChunks = [];
 			for (let i = 0; i < lines.length; i += chunkSize) {
 				const chunk = lines.slice(i, i + chunkSize);
@@ -186,20 +186,22 @@ export const startBatchAssigner = async () => {
 						console.error(
 							`   ❌ Partition error for ${chosenWorker}: ${err.message}`
 						);
-						await redis.hset('worker:status', chosenWorker, '1');
+						await redis.hset('worker:status', chosenWorker, '0');
+						// await redis.hdel('worker:status', chosenWorker);
+						// await redis.hdel('worker:partition', chosenWorker);
+						// await redis.hdel('worker:batchInfo', chosenWorker);
 						await releaseLock(lockedWorkerId);
 						console.log(
 							`   🔧 Reset worker ${chosenWorker} to ready (1) and released lock.`
 						);
 						chunksToAssign.unshift(chunkToAssign);
 						chosenWorker = null;
-						await delay(100);
+						await delay(500);
 						continue; // Thử tìm worker khác
 					}
 
-					const partition =
-						partitions[Math.floor(Math.random() * partitions.length)];
-
+					// const partition = partitions[Math.floor(Math.random() * partitions.length)];
+					const partition = partitions.at(0);
 					try {
 						console.log(
 							`   📦 Assigning chunk ${chunkId} (${chunk.length} items) to ${chosenWorker} (partition ${partition})`
@@ -226,7 +228,10 @@ export const startBatchAssigner = async () => {
 						logMessage(
 							`Failed assign/send chunk ${chunkId} to ${chosenWorker}: ${err.message}`
 						);
-						await redis.hset('worker:status', chosenWorker, '1');
+						await redis.hset('worker:status', chosenWorker, '0');
+						// await redis.hdel('worker:status', chosenWorker);
+						// await redis.hdel('worker:partition', chosenWorker);
+						// await redis.hdel('worker:batchInfo', chosenWorker);
 						await releaseLock(lockedWorkerId);
 						console.log(
 							`   🔧 Reset worker ${chosenWorker} to ready (1) and released lock due to send error.`
@@ -286,7 +291,6 @@ export const startBatchAssigner = async () => {
 	}
 };
 
-// Hàm helper để gửi message (giữ nguyên)
 const sendChunkToKafka = async (workerId, batchId, ipList, partition) => {
 	try {
 		await producer.send({
