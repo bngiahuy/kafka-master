@@ -1,35 +1,47 @@
-# HSE Kafka Master
+# Kafka Master
+## Architecture Overview
 
-A Node.js application that implements a Kafka producer/consumer pattern for distributed message processing.
+* **Master Node**: Coordinates job distribution and monitors worker status
+* **Worker Nodes**: Process assigned data batches and report completion
+* **Kafka**: Message broker for communication between components
+* **Redis**: Stores worker status, job assignments, and system state
 
 ## Project Structure
 
 ```
-hse-kafka-master/
+kafka-master/
 ├── src/
-│   ├── configs/         # Kafka configuration
-│   ├── consumers/       # Kafka consumer implementations
-│   ├── controllers/     # HTTP endpoint controllers
-│   ├── producers/       # Kafka producer implementations
-│   ├── routes/          # Express routes
+│   ├── configs/         # Configuration for Kafka, Redis and services
+│   ├── consumers/       # Kafka message consumers
+│   ├── controllers/     # API endpoint handlers
+│   ├── producers/       # Kafka message producers
+│   ├── routes/          # Express API routes
 │   ├── services/        # Business logic services
-│   ├── utils/          # Utility functions
-│   └── index.js        # Application entry point
-├── prisma/
-│   └── schema.prisma   # Database schema
-└── package.json
+│   ├── utils/           # Utility functions and helpers
+│   └── index.js         # Application entry point
+├── input_ip_data/       # Batch data files for processing
+└── package.json         # Project dependencies
 ```
 
-## Prerequisites
+## System Flow
 
-- Node.js (version 20 or higher)
-- npm or yarn
-- Apache Kafka server running
-- PostgreSQL database (in development)
+1. **Worker Registration**:
+   * Workers connect to `KAFKA_TOPIC_NAME_WORKER_FREE` with their workerId and partition assignment
+   * Master stores worker information in Redis
 
-## Environment Setup
+2. **Batch Processing**:
+   * Master reads files from `input_ip_data/` directory
+   * Splits files into manageable chunks based on configured size
+   * Assigns chunks to available workers via `KAFKA_TOPIC_NAME_MASTER` topic
 
-Create a `.env` file in the root directory with the following variables:
+3. **Job Execution & Monitoring**:
+   * Workers process assigned data and report progress to `KAFKA_TOPIC_NAME_WORKER`
+   * Master tracks worker status and handles timeouts/failures
+   * Completed batches are marked as processed
+
+## Configuration
+
+The system uses environment variables for configuration:
 
 ```
 # API Server
@@ -38,70 +50,26 @@ API_SERVER_PORT=3001
 # Kafka Configuration
 KAFKA_BROKER_ADDRESS=localhost
 KAFKA_BROKER_PORT=9092
-KAFKA_TOPIC_NAME_WORKER=work-signal
-KAFKA_TOPIC_NAME_MASTER=master-signal
-KAFKA_TOPIC_NAME_WORKER_FREE=worker-connection
+KAFKA_TOPIC_NAME_WORKER=worker-signal      # Workers -> Master (results)
+KAFKA_TOPIC_NAME_MASTER=master-signal      # Master -> Workers (assignments)
+KAFKA_TOPIC_NAME_WORKER_FREE=worker-connection  # Workers -> Master (registration)
 ```
-
-## Installation
-
-Install project dependencies:
-
-```sh
-npm install
-```
-
-Initialize the database:
-
-```sh
-npx prisma generate
-```
-
-## Running the Application
-
-Start the application in development mode:
-
-```sh
-npm run dev
-```
-
-The server will start on the configured port (default: 3001).
 
 ## API Endpoints
 
-### Send Signal to Workers
-- **URL**: `/api/sendToWorkers`
-- **Method**: GET
-- **Description**: Sends a signal message to all connected Kafka workers
+* **GET /api/getWorkersStatus**: View current worker status
+* **GET /api/getNumBatches**: Get current batch size setting
+* **GET /api/updateNumBatches?numBatches=N**: Update batch size configuration
+* **GET /api/getPartitions**: Get Kafka partition information
+* **GET /api/updatePartitions?value=N**: Update Kafka partition number (supports only master-signal topic).
 
-## Application Flow
-
-1. The application starts an Express server and initializes a Kafka consumer.
-2. The consumer listens for messages on the `work-signal` topic from workers.
-3. When the `/api/sendToWorkers` endpoint is called, the producer sends a message to the `master-signal` topic.
-4. Messages received from workers are logged to the console.
-
-## Project Dependencies
-
-- `express` - Web framework for handling HTTP requests
-- `kafkajs` - Kafka client for Node.js
-- `dotenv` - Environment variable management
-- `prisma` - Database ORM
-
-## Scripts
-
-- `npm run dev` - Start the application in development mode
-- `npm start` - Start the application in production mode
-
-For more information about the Kafka configuration and message handling, see the `kafkaConfig.js` and `kafkaConsumer.js` files.
-
-## Commands to create topics
+## Running the System
+- Create a folder named `input_ip_data` inside the project folder.
+- Create `.env` file and its content.
+- Use docker-compose to run the program.
+```bash
+# Using docker-compose
+docker-compose up -d
 ```
-./opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --create --topic master-signal --partitions 10 --replication-factor 1
-
-./opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --create --topic worker-signal --partitions 1 --replication-factor 1
-
-./opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --create --topic worker-connection --partitions 1 --replicatifactor 1
-
-./opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list
-```
+- Wait a few seconds for kafka-workers registration successfully, then you can add .txt files into `input_ip_data` folder.
+- You can use some API Endpoints above to monitor.

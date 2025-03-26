@@ -27,8 +27,6 @@ services:
     container_name: redis
     ports:
       - '6379:6379'
-    # volumes:
-    #   - ./redis_data:/data
     networks:
       - backend
 
@@ -40,14 +38,21 @@ services:
     ports:
       - '${API_SERVER_PORT}:${API_SERVER_PORT}'
     environment:
+      API_SERVER_PORT: ${API_SERVER_PORT}
       KAFKA_BROKER_ADDRESS: ${KAFKA_BROKER_ADDRESS}
       KAFKA_BROKER_PORT: ${KAFKA_BROKER_PORT}
       KAFKA_TOPIC_NAME_WORKER: ${KAFKA_TOPIC_NAME_WORKER}
       KAFKA_TOPIC_NAME_MASTER: ${KAFKA_TOPIC_NAME_MASTER}
-      API_SERVER_PORT: ${API_SERVER_PORT}
       KAFKA_TOPIC_NAME_WORKER_FREE: ${KAFKA_TOPIC_NAME_WORKER_FREE}
+      KAFKA_TOPIC_NAME_HEARTBEAT: ${KAFKA_TOPIC_NAME_HEARTBEAT}
+      CLIENT_DATA_PATH: ${CLIENT_DATA_PATH}
+      SMB_HOST: ${SMB_HOST}
+      SMB_USER: ${SMB_USER}
+      SMB_PASS: ${SMB_PASS}
+      SMB_PORT: ${SMB_PORT}
       REDIS_HOST: redis
       REDIS_PORT: 6379
+    privileged: true
     depends_on:
       - redis
     networks:

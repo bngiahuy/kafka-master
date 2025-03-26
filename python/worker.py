@@ -7,21 +7,50 @@ import uuid
 from datetime import datetime
 import pytz
 from confluent_kafka import Consumer, Producer, KafkaError
+import socket
+import re
+import demjson3
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
+
+# Kafka Configuration
+KAFKA_BOOTSTRAP_SERVERS = os.getenv('KAFKA_BOOTSTRAP_SERVERS', 'localhost:9092')
+KAFKA_MASTER_SEND_TOPIC = os.getenv('KAFKA_MASTER_SEND_TOPIC', 'master-signal')
+KAFKA_WORKER_SEND_TOPIC = os.getenv('KAFKA_WORKER_SEND_TOPIC', 'worker-signal')
+KAFKA_WORKER_CONNECTION_TOPIC = os.getenv('KAFKA_WORKER_CONNECTION_TOPIC', 'worker-connection')
+KAFKA_GROUP_ID = os.getenv('KAFKA_GROUP_ID', 'ip-scanner-group')
+KAFKA_AUTO_OFFSET_RESET = os.getenv('KAFKA_AUTO_OFFSET_RESET', 'latest')
+
+# Processing Configuration
+MAX_CONCURRENT_REQUESTS = int(os.getenv('MAX_CONCURRENT_REQUESTS', 10))
+
+# Path Configuration
+CLIENT_DATA_PATH = os.getenv('CLIENT_DATA_PATH', '/mnt/samba')
+HAS_DATA_PATH = f"{CLIENT_DATA_PATH}/has_data"
+NO_DATA_PATH = f"{CLIENT_DATA_PATH}/no_data"
+OUTPUT_PATH = f"{CLIENT_DATA_PATH}/output"
+
+# Shodan Configuration
+COOKIE = os.getenv('SHODAN_COOKIE', '')
+
 tz = pytz.timezone('Asia/Ho_Chi_Minh')
 
-# Cấu hình Kafka
-KAFKA_BOOTSTRAP_SERVERS = '10.6.18.5:9092'
-KAFKA_MASTER_SEND_TOPIC = 'master-signal'
-KAFKA_WORKER_SEND_TOPIC = 'worker-signal'
-KAFKA_WORKER_CONNECTION_TOPIC = 'worker-connection'
-KAFKA_GROUP_ID = 'ip-scanner-group'
-KAFKA_AUTO_OFFSET_RESET = 'latest'
+# Thêm biến global để lưu mapping port-service
+PORT_SERVICE_MAPPING = {}
 
-# Cấu hình xử lý
-MAX_CONCURRENT_REQUESTS = 10  # Điều chỉnh dựa trên giới hạn API
-
-# Thêm hằng số cho file lưu trạng thái
-WORKER_ID_FILE = "worker_id.txt"
+# Thêm hàm để load service mapping
+def load_service_mapping():
+    global PORT_SERVICE_MAPPING
+    try:
+        with open('service.json', 'r') as f:
+            services = json.load(f)
+            PORT_SERVICE_MAPPING = {str(service['port']): service['service'] for service in services}
+    except Exception as e:
+        logger = logging.getLogger("ip_scanner")
+        logger.error(f"Error loading service.json: {e}")
+        PORT_SERVICE_MAPPING = {}
 
 # Cấu hình logger
 def setup_logger():
@@ -37,101 +66,142 @@ def setup_logger():
     return logger
 
 # Hợp nhất dữ liệu từ hai API
-def merge_ip_data(dataIPInfo, dataShodan, worker_id):
-    timestampt = datetime.now(tz).strftime('%Y-%m-%d %H:%M:%S')
-    if dataShodan:
-        if dataIPInfo:
-            merged = {
-                "ip": dataShodan.get("ip", "N/A"),
-                "location": {
-                    "city": dataIPInfo.get("city", "Unknown"),
-                    "region": dataIPInfo.get("region", "Unknown"),
-                    "country": dataIPInfo.get("country", "Unknown"),
-                    "loc": dataIPInfo.get("loc", "N/A"),
-                    "postal": dataIPInfo.get("postal", "N/A"),
-                    "timezone": dataIPInfo.get("timezone", "N/A")
+def merge_ip_data(data, worker_id, hostname):
+    if not data:
+        return None
+        
+    # Đảm bảo service mapping đã được load
+    if not PORT_SERVICE_MAPPING:
+        load_service_mapping()
+        
+    # Lấy thời gian hiện tại ở múi giờ GMT+7
+    current_time = datetime.now(tz).strftime('%Y-%m-%dT%H:%M:%SZ')
+    
+    # Xử lý thông tin ports
+    processed_ports = []
+    if 'data' in data:
+        for port_data in data['data']:
+            port = str(port_data.get('port', ''))
+            port_info = {
+                "cpe": port_data.get('cpe', [None])[0] if port_data.get('cpe') else None,
+                "cve": [],
+                "port": port,
+                "product": port_data.get('product', ''),
+                "protocol": port_data.get('transport', ''),
+                "service": PORT_SERVICE_MAPPING.get(port, ''),
+                "tls": {
+                    "issuer": port_data.get('ssl', {}).get('cert', {}).get('issuer', 'Unknown'),
+                    "version": port_data.get('ssl', {}).get('cert', {}).get('version', 'Unknown'),
                 },
-                "organization": dataIPInfo.get("org", "Unknown"),
-                "hostnames": dataShodan.get("hostnames", []),
-                "port_list": dataShodan.get("ports", []),
-                "technologies": {
-                    "cpes": dataShodan.get("cpes", []),
-                    "tags": dataShodan.get("tags", [])
-                },
-                "cve_list": dataShodan.get("vulns", []),
-                "scan_method": "tool",
-                "last_scan": timestampt,
-                "vm_id": worker_id
+                "version": port_data.get('version', '')
             }
-        else:
-            merged = {
-                "ip": dataShodan.get("ip", "N/A"),
-                "hostnames": dataShodan.get("hostnames", []),
-                "port_list": dataShodan.get("ports", []),
-                "technologies": {
-                    "cpes": dataShodan.get("cpes", []),
-                    "tags": dataShodan.get("tags", [])
-                },
-                "cve_list": dataShodan.get("vulns", []),
-                "scan_method": "tool",
-                "last_scan": timestampt,
-                "vm_id": worker_id
-            }
-        return merged
-    return None
+            
+            # Xử lý CVE cho port
+            if 'vulns' in port_data:
+                for cve_id in port_data['vulns'].keys():
+                    port_info['cve'].append({
+                        "checked": False,
+                        "id": cve_id,
+                        "validated": False
+                    })
+            
+            processed_ports.append(port_info)
+    
+    # Tạo đối tượng kết quả
+    result = {
+        "asn": data.get('asn', 0),
+        "city": data.get('city', ''),
+        "country": data.get('country_name', ''),
+        "device": "Unknown",
+        "hostnames": data.get('hostnames', []),
+        "ip": data.get('ip_str', ''),
+        "latitude": data.get('latitude', 0),
+        "longitude": data.get('longitude', 0),
+        "org": data.get('org', ''),
+        "os": data.get('os', ''),
+        "port_list": [str(p) for p in data.get('ports', [])],
+        "cve_list": [str(p) for p in data.get('vulns', [])],
+        "scan_method": "tool",
+        "vm_id": hostname,
+        "last_scan": current_time,
+        "ports": processed_ports
+    }
+    
+    return result
 
 # Gọi API không đồng bộ
 async def fetch_ip_info(ip, session, logger, semaphore):
     async with semaphore:
         try:
+            headers = {
+                "Accept": "*/*",
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36 Edg/134.0.0.0",
+                "Cookie": COOKIE
+            }
+            
             # Gọi Shodan API
             async with session.get(
-                f"https://internetdb.shodan.io/{ip}", 
+                f"https://www.shodan.io/host/{ip}/raw",
+                headers=headers,
                 timeout=aiohttp.ClientTimeout(total=10)
-            ) as responseShodan:
-                if responseShodan.status == 404:
-                    # logger.info(f"IP {ip}: Shodan API returned 404 (No data found)")
-                    return False, None, None, 404
-                elif responseShodan.status != 200:
-                    # logger.error(f"IP {ip}: Shodan API failed with status {responseShodan.status}")
-                    return False, None, None, responseShodan.status
+            ) as response:
+                if response.status != 200:
+                    logger.error(f"IP {ip}: Shodan API failed with status {response.status}")
+                    return False, None, response.status
                 
-                dataShodan = await responseShodan.json()
+                content = await response.text()
                 
-                # Gọi IPInfo API
-                try:
-                    async with session.get(
-                        f"https://ipinfo.io/{ip}/json", 
-                        timeout=aiohttp.ClientTimeout(total=10)
-                    ) as responseIPInfo:
-                        if responseIPInfo.status == 200:
-                            dataIPInfo = await responseIPInfo.json()
-                            return True, dataIPInfo, dataShodan, 200
-                        else:
-                            # logger.warning(f"IP {ip}: IPInfo API failed with status {responseIPInfo.status}")
-                            return True, {}, dataShodan, responseIPInfo.status
-                except Exception as e:
-                    # logger.error(f"IP {ip}: IPInfo API error: {str(e)}")
-                    return True, {}, dataShodan, 0
+                # Tìm và parse dữ liệu JSON
+                pattern = r'const DATA = ({[\s\S]*?});'
+                match = re.search(pattern, content)
+                
+                if match:
+                    # Lấy phần JSON string
+                    data_str = match.group(1)
+                    
+                    try:
+                        # Parse JSON với demjson3
+                        data = demjson3.decode(data_str)
+                        return True, data, 200
+                    except Exception as e:
+                        logger.error(f"Error parsing JSON for IP {ip}: {e}")
+                        return False, None, 0
+                else:
+                    logger.error(f"No DATA variable found in HTML for IP {ip}")
+                    return False, None, 0
                 
         except Exception as e:
             logger.error(f"IP {ip}: Shodan API error: {str(e)}")
-            return False, None, None, 0
+            return False, None, 0
+
+# Hàm để lấy tên máy
+def get_host_name():
+    # Thử lấy từ biến môi trường HOSTNAME (cho Docker)
+    docker_hostname = os.environ.get('HOSTNAME')
+    if docker_hostname:
+        return docker_hostname
+    
+    # Nếu không có, lấy tên máy host
+    try:
+        return socket.gethostname()
+    except:
+        return "unknown_host"
 
 # Xử lý một IP và thu thập kết quả
-async def process_ip(ip, session, logger, semaphore, worker_id):
-    success, dataIPInfo, dataShodan, status_code = await fetch_ip_info(ip, session, logger, semaphore)
+async def process_ip(ip, session, logger, semaphore, worker_id, hostname):
+    success, data, status_code = await fetch_ip_info(ip, session, logger, semaphore)
     
     # Chuẩn bị kết quả
     result = {
         "ip": ip,
         "success": success,
         "error": None if success else f"API failed with status {status_code}",
-        "result": None
+        "result": None,
+        "timestamp": datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     }
     
     if success:
-        merged_data = merge_ip_data(dataIPInfo, dataShodan, worker_id)
+        merged_data = merge_ip_data(data, worker_id, hostname)
         if merged_data:
             result["result"] = merged_data
         else:
@@ -142,15 +212,15 @@ async def process_ip(ip, session, logger, semaphore, worker_id):
 
 # Lấy hoặc tạo worker ID
 def get_worker_id():
-    if os.path.exists(WORKER_ID_FILE):
-        with open(WORKER_ID_FILE, 'r') as f:
+    if os.path.exists("worker_id.txt"):
+        with open("worker_id.txt", 'r') as f:
             worker_id = f.read().strip()
             if worker_id:
                 return worker_id
     
     # Tạo ID mới nếu không tìm thấy
     worker_id = str(uuid.uuid4())
-    with open(WORKER_ID_FILE, 'w') as f:
+    with open("worker_id.txt", 'w') as f:
         f.write(worker_id)
     
     return worker_id
@@ -222,35 +292,28 @@ def delivery_callback(err, msg, logger):
     #     logger.info(f'Message delivered to {topic} [partition={partition}] at offset {offset} with key={key}')
 
 # Tạo thư mục logs và scanned nếu chưa tồn tại
-def ensure_directories():
-    # Tạo thư mục logs
-    logs_folder = "logs"
-    os.makedirs(logs_folder, exist_ok=True)
+def ensure_directories(hostname, worker_id):
+    has_data_file = os.path.join(HAS_DATA_PATH, f"has_data_{hostname}_{worker_id}.txt")
+    no_data_file = os.path.join(NO_DATA_PATH, f"no_data_{hostname}_{worker_id}.txt")
     
-    # Tạo thư mục scanned
-    scanned_folder = "scanned"
-    os.makedirs(scanned_folder, exist_ok=True)
+    if not os.path.exists(has_data_file):
+        open(has_data_file, 'w').close()
     
-    # Tạo file codulieu.txt và khongcodulieu.txt nếu chưa tồn tại
-    codulieu_file = os.path.join(logs_folder, "codulieu.txt")
-    khongcodulieu_file = os.path.join(logs_folder, "khongcodulieu.txt")
+    if not os.path.exists(no_data_file):
+        open(no_data_file, 'w').close()
     
-    if not os.path.exists(codulieu_file):
-        open(codulieu_file, 'w').close()
-    
-    if not os.path.exists(khongcodulieu_file):
-        open(khongcodulieu_file, 'w').close()
-    
-    return logs_folder, scanned_folder, codulieu_file, khongcodulieu_file
+    return has_data_file, no_data_file
 
 # Xử lý một batch IP
-async def process_ip_batch(ip_list, batch_id, worker_id, logger):
-    logs_folder, scanned_folder, codulieu_file, khongcodulieu_file = ensure_directories()
+async def process_ip_batch(ip_list, batch_id, worker_id, logger, hostname):
+    # Tạo tên file với hostname và worker_id
+    has_data_file = f"{HAS_DATA_PATH}/has_data_{hostname}_{worker_id}.txt"
+    no_data_file = f"{NO_DATA_PATH}/no_data_{hostname}_{worker_id}.txt"
+    batch_file = f"{OUTPUT_PATH}/{batch_id}.json"
     
     # Tạo file JSON cho batch này
-    batch_file = os.path.join(scanned_folder, f"{batch_id}.json")
     with open(batch_file, 'w') as f:
-        f.write('[\n')  # Bắt đầu mảng JSON
+        f.write('[\n')
     
     # Tạo producer để gửi cập nhật tiến độ
     producer_conf = {
@@ -263,31 +326,31 @@ async def process_ip_batch(ip_list, batch_id, worker_id, logger):
         'retries': 5,
         'retry.backoff.ms': 500
     }
+    
     producer = Producer(producer_conf)
-    
-    # Giới hạn số lượng yêu cầu đồng thời
-    semaphore = asyncio.Semaphore(MAX_CONCURRENT_REQUESTS)
-    
+
     try:
+        # Giới hạn số lượng yêu cầu đồng thời
+        semaphore = asyncio.Semaphore(MAX_CONCURRENT_REQUESTS)
+        
         # Xử lý tất cả IP trong batch
         processed_count = 0
         successful_count = 0
         total_count = len(ip_list)
-        has_written_result = False  # Flag để theo dõi xem đã ghi kết quả nào chưa
+        has_written_result = False
         
         async with aiohttp.ClientSession() as session:
-            tasks = [process_ip(ip, session, logger, semaphore, worker_id) for ip in ip_list]
+            tasks = [process_ip(ip, session, logger, semaphore, worker_id, hostname) for ip in ip_list]
             
             for future in asyncio.as_completed(tasks):
                 result = await future
                 processed_count += 1
                 
-                # Lưu kết quả vào file tương ứng
                 if result["success"]:
                     successful_count += 1
-                    # Lưu vào file codulieu.txt
-                    with open(codulieu_file, 'a') as f:
-                        f.write(f"{result['ip']}\n")
+                    # Lưu vào file codulieu.txt với timestamp và hostname
+                    with open(has_data_file, 'a') as f:
+                        f.write(f"[{datetime.now().strftime('%Y-%m-%dT%H:%M:%SZ')}] {result['ip']} (scanned by {hostname})\n")
                     
                     # Lưu vào file JSON của batch
                     with open(batch_file, 'a') as f:
@@ -296,9 +359,9 @@ async def process_ip_batch(ip_list, batch_id, worker_id, logger):
                         json.dump(result["result"], f, separators=(',', ':'))
                         has_written_result = True
                 else:
-                    # Lưu vào file khongcodulieu.txt
-                    with open(khongcodulieu_file, 'a') as f:
-                        f.write(f"{result['ip']}\n")
+                    # Lưu vào file khongcodulieu.txt với timestamp và hostname
+                    with open(no_data_file, 'a') as f:
+                        f.write(f"[{datetime.now().strftime('%Y-%m-%dT%H:%M:%SZ')}] {result['ip']} (scanned by {hostname})\n")
                 
                 # Gửi cập nhật tiến độ
                 await send_progress_update(producer, worker_id, batch_id, processed_count, total_count, logger)
@@ -330,6 +393,10 @@ async def main():
     
     # Lấy hoặc tạo worker ID
     worker_id = get_worker_id()
+
+    # Lấy tên máy
+    hostname = get_host_name()
+
     logger.info(f"Worker ID: {worker_id}")
     
     # Cấu hình Kafka Consumer
@@ -433,7 +500,7 @@ async def main():
                     logger.info(f"Received batch_id: {batch_id} with {len(ip_list)} IPs")
                     
                     # Xử lý batch IP
-                    await process_ip_batch(ip_list, batch_id, worker_id, logger)
+                    await process_ip_batch(ip_list, batch_id, worker_id, logger, hostname)
                 else:
                     logger.debug(f"Received message for worker {message_worker_id}, ignoring (my ID: {worker_id})")
                 

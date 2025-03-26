@@ -3,7 +3,7 @@ input_ip_data
 
 .env
 *.bat
-
+*.log
 logs
 scanned
 worker_id.txt

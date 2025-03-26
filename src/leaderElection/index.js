@@ -7,7 +7,7 @@ async function sendHeartbeat(masterId) {
     await producer.connect();
     while (true) {
         await producer.send({
-            topic: 'master-heartbeat',
+            topic: process.env.KAFKA_TOPIC_NAME_HEARTBEAT,
             messages: [{ key: masterId, value: JSON.stringify({ status: 'alive' }) }],
         });
         await new Promise(resolve => setTimeout(resolve, 5000)); // Gửi heartbeat mỗi 5 giây
@@ -16,7 +16,7 @@ async function sendHeartbeat(masterId) {
 
 export const startLeaderElection = async (masterId, onBecomeLeader) => {
 	await consumer.connect();
-    await consumer.subscribe({ topic: 'master-heartbeat', fromBeginning: true });
+    await consumer.subscribe({ topic: process.env.KAFKA_TOPIC_NAME_HEARTBEAT, fromBeginning: true });
 
 	// Bắt đầu gửi heartbeat
     sendHeartbeat(masterId).catch(console.error);

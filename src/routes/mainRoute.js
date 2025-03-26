@@ -1,8 +1,17 @@
 import { Router } from 'express';
-import { sendSignal } from '../controllers/mainController.js';
+import {
+	getWorkersStatus,
+	updateNumBatches,
+	getNumBatches,
+	getPartitions,
+	updatePartitions,
+} from '../controllers/mainController.js';
 
 const mainRouter = Router();
 
-mainRouter.use('/sendToWorkers', sendSignal);
-
+mainRouter.use('/updateNumBatches', updateNumBatches);
+mainRouter.use('/updatePartitions', updatePartitions);
+mainRouter.use('/getPartitions', getPartitions);
+mainRouter.use('/getNumBatches', getNumBatches);
+mainRouter.use('/getWorkersStatus', getWorkersStatus);
 export default mainRouter;

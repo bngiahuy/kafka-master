@@ -2,6 +2,7 @@ import express from 'express';
 import { runConsumer } from './consumers/kafkaConsumer.js';
 import mainRouter from './routes/mainRoute.js';
 import { rateLimit } from 'express-rate-limit';
+import { startBatchAssigner } from './producers/kafkaProducer.js';
 import { startLeaderElection } from './leaderElection/index.js';
 
 const app = express();
@@ -28,6 +29,7 @@ const startApp = async (masterId) => {
             console.log(`${leaderId} bắt đầu chạy consumer và API...`);
             isLeader = true;
             await runConsumer(); // Chạy consumer khi là leader
+            await startBatchAssigner();
             app.use(express.json());
 			// app.use(apiRateLimitting);
             app.use('/api', mainRouter); // API chỉ hoạt động khi là leader
