@@ -1,19 +1,43 @@
 import redis from '../configs/redisConfig.js';
-import { assignBatches } from '../producers/kafkaProducer.js';
+import getPartitionsService from '../services/getPartitionsService.js';
 
-export const sendSignal = async (req, res) => {
+export const assignNumBatches = async (req, res) => {
 	try {
-		// Get parameters from request. this is a GET request
-		const { numBatches } = req.query;
-		if (!numBatches || isNaN(numBatches) || numBatches < 1) {
-			// Set default value for numBatches if it is not provided
-			numBatches = 1000;
+		let { numBatches } = req.query;
+		if (!numBatches || isNaN(numBatches) || parseInt(numBatches) < 1) {
+			console.log(
+				'⚠️ Invalid or missing numBatches query param, using default 1000.'
+			);
+			numBatches = 1000; // Gán giá trị mặc định
+		} else {
+			numBatches = parseInt(numBatches);
 		}
 		await redis.set('numBatches', numBatches);
-		await assignBatches();
-		res.status(200).send('Message sent to Workers');
+		console.log(`🔧 Updated numBatches to ${numBatches}`);
+		res
+			.status(200)
+			.send(`numBatches updated to ${numBatches}. Assigner loop continues.`);
 	} catch (error) {
-		res.status(500).send('Error sending message to Workers');
+		console.error('❌ Error updating numBatches:', error);
+		res.status(500).send('Error updating numBatches in Redis.');
+	}
+};
+
+export const getPartitions = async (req, res) => {
+	try {
+		const partitions = await getPartitionsService();
+		res.status(200).send(partitions);
+	} catch (error) {
+		res.status(500).send('Error getting partitions from Kafka.');
+	}
+};
+
+export const getNumBatches = async (req, res) => {
+	try {
+		const numBatches = await redis.get('numBatches');
+		res.status(200).send(numBatches);
+	} catch (error) {
+		res.status(500).send('Error getting numBatches from Redis.');
 	}
 };
 
