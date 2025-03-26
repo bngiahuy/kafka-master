@@ -14,7 +14,7 @@ await admin
 		topics: [
 			{
 				topic: process.env.KAFKA_TOPIC_NAME_MASTER,
-				numPartitions: 10,
+				numPartitions: 3,
 				replicationFactor: 1,
 			},
 			{
@@ -35,7 +35,17 @@ await admin
 		} else {
 			console.log('Topics have already existed!');
 		}
-		console.log(await admin.listTopics());
+		const topics = await admin.listTopics();
+		const partitions = await Promise.all(
+			topics.map(async (topic) => {
+				const metadata = await admin.fetchTopicMetadata({ topics: [topic] });
+				return {
+					topic,
+					partitions: metadata.topics[0].partitions.length,
+				};
+			})
+		);
+		console.log(partitions);
 	})
 	.catch((err) => {
 		console.error('Failed to create topics: ', err);

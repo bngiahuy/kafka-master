@@ -1,7 +1,10 @@
 import redis from '../configs/redisConfig.js';
-import getPartitionsService from '../services/getPartitionsService.js';
+import {
+	getPartitionsService,
+	updatePartitionsService,
+} from '../services/partitionsService.js';
 
-export const assignNumBatches = async (req, res) => {
+export const updateNumBatches = async (req, res) => {
 	try {
 		let { numBatches } = req.query;
 		if (!numBatches || isNaN(numBatches) || parseInt(numBatches) < 1) {
@@ -29,6 +32,16 @@ export const getPartitions = async (req, res) => {
 		res.status(200).send(partitions);
 	} catch (error) {
 		res.status(500).send('Error getting partitions from Kafka.');
+	}
+};
+
+export const updatePartitions = async (req, res) => {
+	try {
+		const { value } = req.query;
+		const result = await updatePartitionsService(value);
+		res.status(200).send(result);
+	} catch (error) {
+		res.status(500).send('Error updating partitions in Redis.');
 	}
 };
 

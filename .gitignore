@@ -3,3 +3,4 @@ input_ip_data
 
 .env
 *.bat
+*.log

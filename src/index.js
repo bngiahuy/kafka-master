@@ -20,10 +20,8 @@ const apiRateLimitting = rateLimit({
 });
 
 const startApp = async () => {
-	await startBatchAssigner().catch((err) => {
-		console.error('Fatal error during batch assigner startup:', err);
-		process.exit(1);
-	});
+	await runConsumer();
+	await startBatchAssigner();
 };
 startApp();
 

@@ -12,7 +12,7 @@ const producer = kafka.producer();
 const BATCH_DIR = './input_ip_data';
 const PROCESSED_FILES_KEY = 'processed:files'; // Key cho Redis Set
 const CHECK_INTERVAL = 5000; // Kiểm tra file mới mỗi 5 giây (5000ms)
-
+const WORKER_POLL_INTERVAL = 100;
 let isRunning = true; // Biến cờ để dừng vòng lặp chính
 
 // --- Helper function để chờ ---
@@ -130,7 +130,7 @@ export const startBatchAssigner = async () => {
 
 				if (readyWorkers.length === 0) {
 					process.stdout.write('.'); // Waiting for worker
-					await delay(500);
+					await delay(WORKER_POLL_INTERVAL);
 					if (!isRunning) break; // Thoát nếu nhận tín hiệu dừng trong lúc đợi worker
 					continue;
 				} else if (assignedChunkCount > 0) {
@@ -233,13 +233,13 @@ export const startBatchAssigner = async () => {
 						);
 						chunksToAssign.unshift(chunkToAssign);
 						// Cân nhắc dừng xử lý file này nếu lỗi gửi liên tục
-						// fileProcessingSuccess = false;
+						fileProcessingSuccess = false;
 						// break;
 						await delay(500); // Chờ chút trước khi thử lại
 					}
 				} else {
 					process.stdout.write('~'); // Waiting for lock
-					await delay(200);
+					await delay(100);
 					if (!isRunning) break; // Thoát nếu nhận tín hiệu dừng trong lúc đợi lock
 				}
 			} // --- Kết thúc vòng lặp gán chunk cho file hiện tại ---
@@ -294,7 +294,7 @@ const sendChunkToKafka = async (workerId, batchId, ipList, partition) => {
 			messages: [
 				{
 					key: workerId,
-					partition,
+					// partition,
 					value: JSON.stringify({
 						id: workerId,
 						batchId: batchId,

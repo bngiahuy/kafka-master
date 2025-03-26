@@ -50,6 +50,8 @@ services:
       REDIS_PORT: 6379
     depends_on:
       - redis
+    volumes:
+      - ./input_ip_data:/app/input_ip_data
     networks:
       - backend
 

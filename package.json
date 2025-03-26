@@ -1,5 +1,5 @@
 {
-	"name": "hse-kafka-master",
+	"name": "kafka-master",
 	"version": "1.0.0",
 	"main": "src/index.js",
 	"type": "module",

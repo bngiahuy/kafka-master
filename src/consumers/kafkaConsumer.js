@@ -65,7 +65,7 @@ const checkWorkerStatus = () => {
 
 				// Timeout dựa trên thời gian ước tính (ví dụ: 1 giây mỗi item + 10 giây cơ bản)
 				// Điều chỉnh timeout này cho phù hợp với thực tế xử lý của bạn
-				const estimatedProcessingTime = (batchInfo.total || 0) * 1000 + 10000; // 1s/item + 10s buffer
+				const estimatedProcessingTime = (batchInfo.total || 0) * 100; // 0.1s/item
 				const timeSinceAssigned = now - batchInfo.assignedAt;
 
 				// Kiểm tra thêm lastSeen để chắc chắn worker còn hoạt động
@@ -94,8 +94,7 @@ const checkWorkerStatus = () => {
 					await releaseLock(workerId); // Quan trọng: giải phóng lock
 					console.log(`🧹 Cleaned up timeout worker ${workerId}.`);
 
-					// TODO: Cần có cơ chế để gán lại batchId bị mất này (batchInfo.batchId)
-					// Ví dụ: Đẩy batchId này vào một danh sách lỗi hoặc quay lại hàng đợi chính.
+					// Skip batch id này
 				}
 			}
 		} catch (error) {
@@ -274,8 +273,6 @@ export const runConsumer = async () => {
 		// Cân nhắc việc cố gắng kết nối lại hoặc thoát process
 		// await consumer.disconnect(); // Thử ngắt kết nối
 		// process.exit(1);
-	} finally {
-		// Có thể thêm dọn dẹp ở đây nếu cần, nhưng thường consumer sẽ chạy liên tục
 	}
 
 	// Xử lý tín hiệu dừng cho consumer
