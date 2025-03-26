@@ -3,6 +3,7 @@ import { runConsumer } from './consumers/kafkaConsumer.js';
 import mainRouter from './routes/mainRoute.js';
 import { rateLimit } from 'express-rate-limit';
 import { startBatchAssigner } from './producers/kafkaProducer.js';
+import { startLeaderElection } from './leaderElection/index.js';
 
 const app = express();
 const port = process.env.API_SERVER_PORT || 3001;
@@ -19,15 +20,34 @@ const apiRateLimitting = rateLimit({
 	},
 });
 
-const startApp = async () => {
+const startApp = async (masterId) => {
+	let isLeader = false;
+
+	// Callback khi trở thành leader
+	const onBecomeLeader = async (leaderId) => {
+		if (!isLeader) {
+			console.log(`${leaderId} bắt đầu chạy consumer và API...`);
+			isLeader = true;
+			await runConsumer(); // Chạy consumer khi là leader
+			app.use(express.json());
+			// app.use(apiRateLimitting);
+			app.use('/api', mainRouter); // API chỉ hoạt động khi là leader
+			app.listen(port, () => {
+				console.log(`Server ${leaderId} is running on port ${port}`);
+			});
+		}
+	};
+
+	// Bắt đầu leader election mà không cần biết otherMasterId
+	await startLeaderElection(masterId, onBecomeLeader);
+
+	// Nếu không phải leader, không khởi động server Express
+	if (!isLeader) {
+		console.log(`${masterId} đang ở chế độ standby...`);
+	}
+
 	await runConsumer();
 	await startBatchAssigner();
 };
-startApp();
-
-app.use(express.json());
-// app.use(apiRateLimitting);
-app.use('/api', mainRouter);
-app.listen(port, () => {
-	console.log(`Server is running on port ${port}`);
-});
+const masterId = process.env.MASTER_ID || 'master-1';
+startApp(masterId);
