@@ -28,7 +28,8 @@ const startApp = async (masterId) => {
 		if (!isLeader) {
 			console.log(`${leaderId} bắt đầu chạy consumer và API...`);
 			isLeader = true;
-			await runConsumer(); // Chạy consumer khi là leader
+			await runConsumer();
+			await startBatchAssigner();
 			app.use(express.json());
 			// app.use(apiRateLimitting);
 			app.use('/api', mainRouter); // API chỉ hoạt động khi là leader
@@ -45,9 +46,6 @@ const startApp = async (masterId) => {
 	if (!isLeader) {
 		console.log(`${masterId} đang ở chế độ standby...`);
 	}
-
-	await runConsumer();
-	await startBatchAssigner();
 };
 const masterId = process.env.MASTER_ID || 'master-1';
 startApp(masterId);

@@ -40,6 +40,7 @@ services:
     ports:
       - '${API_SERVER_PORT}:${API_SERVER_PORT}'
     environment:
+      MASTER_ID: ${MASTER_ID}
       API_SERVER_PORT: ${API_SERVER_PORT}
       KAFKA_BROKER_ADDRESS: ${KAFKA_BROKER_ADDRESS}
       KAFKA_BROKER_PORT: ${KAFKA_BROKER_PORT}
