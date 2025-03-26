@@ -6,6 +6,7 @@ import { releaseLock } from '../utils/helper.js'; // Đảm bảo import đúng
 
 const consumer = kafka.consumer({
 	groupId: 'master-group',
+	metadataMaxAge: 10000, // 10 giây
 });
 
 // --- Worker Timeout Check --- (Giữ nguyên hoặc cải tiến nếu cần)
@@ -63,9 +64,7 @@ const checkWorkerStatus = () => {
 					continue;
 				}
 
-				// Timeout dựa trên thời gian ước tính (ví dụ: 1 giây mỗi item + 10 giây cơ bản)
-				// Điều chỉnh timeout này cho phù hợp với thực tế xử lý của bạn
-				const estimatedProcessingTime = (batchInfo.total || 0) * 100; // 0.1s/item
+				const estimatedProcessingTime = (batchInfo.total || 0) * 100 + 7000; // 0.1s/item
 				const timeSinceAssigned = now - batchInfo.assignedAt;
 
 				// Kiểm tra thêm lastSeen để chắc chắn worker còn hoạt động

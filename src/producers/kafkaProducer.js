@@ -102,7 +102,7 @@ export const startBatchAssigner = async () => {
 
 			// --- Logic chia chunk và gán worker (giữ nguyên phần lớn) ---
 			const chunkSizeRaw = await redis.get('numBatches');
-			const chunkSize = parseInt(chunkSizeRaw) || 1000;
+			const chunkSize = parseInt(chunkSizeRaw) || 100;
 			const fileChunks = [];
 			for (let i = 0; i < lines.length; i += chunkSize) {
 				const chunk = lines.slice(i, i + chunkSize);
@@ -233,7 +233,7 @@ export const startBatchAssigner = async () => {
 						);
 						chunksToAssign.unshift(chunkToAssign);
 						// Cân nhắc dừng xử lý file này nếu lỗi gửi liên tục
-						fileProcessingSuccess = false;
+						// fileProcessingSuccess = false;
 						// break;
 						await delay(500); // Chờ chút trước khi thử lại
 					}
@@ -294,7 +294,7 @@ const sendChunkToKafka = async (workerId, batchId, ipList, partition) => {
 			messages: [
 				{
 					key: workerId,
-					// partition,
+					partition,
 					value: JSON.stringify({
 						id: workerId,
 						batchId: batchId,
