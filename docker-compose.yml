@@ -29,33 +29,33 @@ services:
       - '6379:6379'
     #     # volumes:
     #     #   - ./redis_data:/data
-    networks:
-      - backend
+#     networks:
+#       - backend
 
-  nodeapp:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    container_name: nodeapp
-    ports:
-      - '${API_SERVER_PORT}:${API_SERVER_PORT}'
-    environment:
-      MASTER_ID: ${MASTER_ID}
-      API_SERVER_PORT: ${API_SERVER_PORT}
-      KAFKA_BROKER_ADDRESS: ${KAFKA_BROKER_ADDRESS}
-      KAFKA_BROKER_PORT: ${KAFKA_BROKER_PORT}
-      KAFKA_TOPIC_NAME_WORKER: ${KAFKA_TOPIC_NAME_WORKER}
-      KAFKA_TOPIC_NAME_MASTER: ${KAFKA_TOPIC_NAME_MASTER}
-      KAFKA_TOPIC_NAME_WORKER_FREE: ${KAFKA_TOPIC_NAME_WORKER_FREE}
-      REDIS_HOST: redis
-      REDIS_PORT: 6379
-    depends_on:
-      - redis
-    volumes:
-      - ./input_ip_data:/app/input_ip_data
-    networks:
-      - backend
+#   nodeapp:
+#     build:
+#       context: .
+#       dockerfile: Dockerfile
+#     container_name: nodeapp
+#     ports:
+#       - '${API_SERVER_PORT}:${API_SERVER_PORT}'
+#     environment:
+#       MASTER_ID: ${MASTER_ID}
+#       API_SERVER_PORT: ${API_SERVER_PORT}
+#       KAFKA_BROKER_ADDRESS: ${KAFKA_BROKER_ADDRESS}
+#       KAFKA_BROKER_PORT: ${KAFKA_BROKER_PORT}
+#       KAFKA_TOPIC_NAME_WORKER: ${KAFKA_TOPIC_NAME_WORKER}
+#       KAFKA_TOPIC_NAME_MASTER: ${KAFKA_TOPIC_NAME_MASTER}
+#       KAFKA_TOPIC_NAME_WORKER_FREE: ${KAFKA_TOPIC_NAME_WORKER_FREE}
+#       REDIS_HOST: redis
+#       REDIS_PORT: 6379
+#     depends_on:
+#       - redis
+#     volumes:
+#       - ./input_ip_data:/app/input_ip_data
+#     networks:
+#       - backend
 
-networks:
-  backend:
-    driver: bridge
+# networks:
+#   backend:
+#     driver: bridge

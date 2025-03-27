@@ -1,19 +1,25 @@
-import redis from '../configs/redisConfig.js';
+import { readdirSync, readFileSync } from 'fs';
+import { join } from 'path';
 
-export const acquireLock = async (workerId, timeout = 1000) => {
-	const lockKey = `lock:worker:${workerId}`;
-	const startTime = Date.now();
-	const result = await redis.set(lockKey, 'locked', 'NX', 'PX', timeout);
-	const endTime = Date.now();
-	console.log(
-		`🚀 ~ acquireLock ~ worker: ${workerId}, result: ${result}, time: ${
-			endTime - startTime
-		}ms`
-	);
-	return result === 'OK';
-};
+export function getIpFiles(folderPath) {
+	try {
+		const files = readdirSync(folderPath)
+			.filter((file) => file.endsWith('.txt'))
+			.map((file) => join(folderPath, file))
+			.sort();
+		return files;
+	} catch (e) {
+		console.error(`Error reading directory ${folderPath}: ${e}`);
+		return [];
+	}
+}
 
-export const releaseLock = async (workerId) => {
-	const lockKey = `lock:worker:${workerId}`;
-	await redis.del(lockKey);
-};
+export function readIpFile(filePath) {
+	try {
+		const data = readFileSync(filePath, 'utf8');
+		return data.split('\n').filter((line) => line.trim());
+	} catch (e) {
+		console.error(`Error reading file ${filePath}: ${e}`);
+		return [];
+	}
+}
