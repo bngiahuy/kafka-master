@@ -162,6 +162,28 @@ class State {
 		}
 		return batches;
 	}
+
+	// Lấy toàn bộ worker và trạng thái của chúng (doing/free)
+	async getAllWorkersStatus() {
+		const workerIds = await redis.smembers(this.activeWorkersKey);
+		const workersStatus = {};
+
+		for (const workerId of workerIds) {
+			const workerKey = `${this.workersPrefix}${workerId}`;
+			const workerData = await redis.hgetall(workerKey);
+			const pendingBatches = parseInt(workerData.pendingBatches || '0');
+			const status = pendingBatches > 0 ? 'doing' : 'free';
+
+			workersStatus[workerId] = {
+				status,
+				lastActivity: parseInt(workerData.lastActivity),
+				partitions: JSON.parse(workerData.partitions || '[]'),
+				pendingBatches,
+			};
+		}
+
+		return workersStatus;
+	}
 }
 
 export default State;

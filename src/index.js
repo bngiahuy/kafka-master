@@ -1,9 +1,14 @@
-import State from './state.js';
-import KafkaManager from './configs/kafkaConfig.js';
 import 'dotenv/config';
+import State from './state.js';
+import express from 'express';
+import KafkaManager from './configs/kafkaConfig.js';
 import { getIpFiles, readIpFile } from './utils/helper.js';
 import redis from './configs/redisConfig.js';
 import path from 'path';
+import mainRouter from './routes/mainRoutes.js';
+import startLeaderElection from './leaderElection/index.js';
+import { randomUUID } from 'crypto';
+
 async function processIpFile(filePath, kafkaManager, state) {
 	const filename = path.basename(filePath);
 	const processedFiles = await redis.smembers(state.processedFilesKey);
@@ -43,7 +48,12 @@ async function processIpFile(filePath, kafkaManager, state) {
 	}
 
 	const workerId = availableWorkers[0];
-	const endPos = Math.min(startPos + process.env.BATCH_SIZE, ipList.length);
+	const batchSize =
+		parseInt(await redis.get('numBatches')) ||
+		parseInt(process.env.BATCH_SIZE) ||
+		1000;
+
+	const endPos = Math.min(startPos + batchSize, ipList.length);
 	const ipBatch = ipList.slice(startPos, endPos);
 
 	await kafkaManager.sendBatch(
@@ -121,6 +131,25 @@ async function main(folderPath) {
 	}
 }
 
-main(process.argv[2]).catch((e) => console.error(e));
+const app = express();
+const port = process.env.API_SERVER_PORT || 3001;
+const masterId = 'master-' + randomUUID();
+const startApp = async (masterId) => {
+	const onBecomeLeader = async (leaderId) => {
+		console.log(
+			`${leaderId}: I am now the leader, starting main process and API...`
+		);
+		main(process.argv[2]).catch((e) => console.error(e));
+		app.use(express.json());
+		app.use('/api', mainRouter);
+		app.listen(port, () => {
+			console.log(`Server ${leaderId} is running on port ${port}`);
+		});
+	};
 
-export default { main, processIpFile };
+	await startLeaderElection(masterId, onBecomeLeader);
+
+	console.log(`${masterId}: In standby mode, waiting for leadership...`);
+};
+
+startApp(masterId);
