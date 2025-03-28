@@ -48,7 +48,12 @@ export const updatePartitions = async (req, res) => {
 export const getNumBatches = async (req, res) => {
 	try {
 		const numBatches = await redis.get('numBatches');
-		res.status(200).send(numBatches);
+		if (!numBatches) {
+			await redis.set('numBatches', 1000);
+			res.status(200).send(1000); // Nếu không có numBatches, set lại 1000 và trả về 1000
+		} else {
+			res.status(200).send(numBatches);
+		}
 	} catch (error) {
 		res.status(500).send('Error getting numBatches from Redis.');
 	}

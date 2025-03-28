@@ -14,7 +14,7 @@ await admin
 		topics: [
 			{
 				topic: process.env.KAFKA_TOPIC_NAME_MASTER,
-				numPartitions: 3,
+				numPartitions: 15,
 				replicationFactor: 1,
 			},
 			{

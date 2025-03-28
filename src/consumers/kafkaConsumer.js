@@ -142,18 +142,8 @@ export const runConsumer = async () => {
 			// Để giảm số lượng message xử lý đồng thời, bạn có thể thay đổi giá trị này
 			// partitionsConsumedConcurrently: 10, // Điều chỉnh dựa trên giới hạn API
 			eachMessage: async ({ topic, partition, message }) => {
-				// console.log(`\n📩 Received message on topic "${topic}", partition ${partition}`);
-				let data;
-				try {
-					data = JSON.parse(message.value.toString());
-				} catch (err) {
-					console.error(
-						`❌ Error parsing message value: ${message.value.toString()}`,
-						err
-					);
-					return; // Bỏ qua message không hợp lệ
-				}
-
+				console.log(`\n📩 Received message on topic "${topic}", partition ${partition}`);
+				let data = JSON.parse(message.value.toString());
 				// --- Xử lý Worker đăng ký hoặc báo sẵn sàng ---
 				if (topic === process.env.KAFKA_TOPIC_NAME_WORKER_FREE) {
 					const { id: workerId, status: workerStatus } = data;
@@ -178,8 +168,10 @@ export const runConsumer = async () => {
 					} else if (workerStatus === 'new') {
 						const { partitions } = data;
 						console.log(`🆕 New worker ${workerId} registered with partitions:`, partitions);
-						await redis.hset('worker:partition', workerId, JSON.stringify(partitions));
-						await redis.hset('worker:status', workerId, '1');
+						const multi = redis.multi();
+						multi.hset('worker:status', workerId, '1');
+						multi.hset('worker:partition', workerId, JSON.stringify(partitions));
+						await multi.exec();
 						await releaseLock(workerId);
 					}
 				}
@@ -213,8 +205,9 @@ export const runConsumer = async () => {
 						return;
 					}
 
+					const multi = redis.multi();
 					// --- Update last seen time ---
-					await redis.set(`lastSeen:${workerId}`, Date.now(), 'EX', 60 * 5); // Cập nhật và tự hết hạn sau 5 phút nếu không có cập nhật mới
+					multi.set(`lastSeen:${workerId}`, Date.now(), 'EX', 60 * 5); // Cập nhật và tự hết hạn sau 5 phút nếu không có cập nhật mới
 					// console.log(`   -> Updated lastSeen for ${workerId}`);
 
 					// --- Log progress ---
@@ -225,7 +218,7 @@ export const runConsumer = async () => {
 						`${workerId} progress ${batchId}: ${processedCount}/${totalCount}`
 					);
 					// Có thể lưu tiến trình vào Redis nếu cần theo dõi chi tiết, nhưng không bắt buộc
-					await redis.hset('worker:processing', batchId, processedCount);
+					multi.hset('worker:processing', batchId, processedCount);
 
 					// --- Check for errors reported by worker ---
 					if (error) {
@@ -237,9 +230,10 @@ export const runConsumer = async () => {
 							`Worker ${workerId} error on batch ${batchId}: ${error}`
 						);
 						// Worker báo lỗi -> Coi như xong việc (lỗi), reset worker
-						await setWorkerStatus(workerId, '1');
+						multi.set(`worker:status`, workerId, '1');
 						await releaseLock(workerId); // Giải phóng lock
-						await redis.hdel('worker:batchInfo', workerId); // Xóa thông tin batch đang làm
+						multi.hdel('worker:batchInfo', workerId); // Xóa thông tin batch đang làm
+						await multi.exec();
 						console.log(
 							`   -> Worker ${workerId} reset to ready (1) due to reported error.`
 						);
@@ -255,12 +249,15 @@ export const runConsumer = async () => {
 						logMessage(`Worker ${workerId} completed batch ${batchId}`);
 
 						// Giải phóng worker: Đặt lại trạng thái và giải phóng lock
-						await setWorkerStatus(workerId, '1');
+						// await setWorkerStatus(workerId, '1');
+						multi.set(`worker:status`, workerId, '1');
 						await releaseLock(workerId);
-						await redis.hdel('worker:batchInfo', workerId); // Xóa thông tin batch đã xong
+						multi.hdel('worker:batchInfo', workerId); // Xóa thông tin batch đã xong
 						console.log(
 							`   -> Worker ${workerId} status set to 1 (Ready) and lock released.`
 						);
+						await multi.exec();
+
 
 						// **QUAN TRỌNG: KHÔNG gọi assignBatches() từ đây**
 						// Vòng lặp trong producer sẽ tự động tìm thấy worker này khi nó cần.
