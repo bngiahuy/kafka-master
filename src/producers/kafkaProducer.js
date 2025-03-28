@@ -140,19 +140,23 @@ export const startBatchAssigner = async () => {
 
 				for (const workerId of readyWorkers) {
 					if (!isRunning) break; // Thoát sớm nếu nhận tín hiệu dừng
-					if (await acquireLock(workerId, 5000)) {
-						const currentStatus = await redis.hget('worker:status', workerId);
-						if (currentStatus === '1') {
-							chosenWorker = workerId;
+					try {
+						if (await acquireLock(workerId, 5000)) {
 							lockedWorkerId = workerId;
-							console.log(`   🔒 Locked worker ${chosenWorker}`);
-							break;
-						} else {
-							console.warn(
-								`   ⚠️ Worker ${workerId} status changed. Releasing lock.`
-							);
-							await releaseLock(workerId);
+							const currentStatus = await redis.hget('worker:status', workerId);
+							if (currentStatus === '1') {
+								chosenWorker = workerId;
+								console.log(`   🔒 Locked worker ${chosenWorker}`);
+								break;
+							} else {
+								console.warn(
+									`   ⚠️ Worker ${workerId} status changed. Releasing lock.`
+								);
+								await releaseLock(workerId);
+							}
 						}
+					} catch (error) {
+						console.error(`Error processing worker ${workerId}:`, error);
 					}
 				}
 				if (!isRunning) break; // Thoát vòng lặp gán chunk nếu nhận tín hiệu dừng
@@ -190,7 +194,7 @@ export const startBatchAssigner = async () => {
 						// await redis.hdel('worker:status', chosenWorker);
 						// await redis.hdel('worker:partition', chosenWorker);
 						// await redis.hdel('worker:batchInfo', chosenWorker);
-						await releaseLock(lockedWorkerId);
+						if (lockedWorkerId) await releaseLock(lockedWorkerId);
 						console.log(
 							`   🔧 Reset worker ${chosenWorker} to ready (1) and released lock.`
 						);
@@ -232,7 +236,7 @@ export const startBatchAssigner = async () => {
 						// await redis.hdel('worker:status', chosenWorker);
 						// await redis.hdel('worker:partition', chosenWorker);
 						// await redis.hdel('worker:batchInfo', chosenWorker);
-						await releaseLock(lockedWorkerId);
+						if (lockedWorkerId) await releaseLock(lockedWorkerId);
 						console.log(
 							`   🔧 Reset worker ${chosenWorker} to ready (1) and released lock due to send error.`
 						);

@@ -2,7 +2,7 @@ import kafka from '../configs/kafkaConfig.js';
 import redis from '../configs/redisConfig.js';
 import 'dotenv/config';
 import logMessage from '../utils/logger.js';
-import { releaseLock } from '../utils/helper.js'; // Đảm bảo import đúng
+import { releaseLock, acquireLock } from '../utils/helper.js'; // Đảm bảo import đúng
 
 const consumer = kafka.consumer({
 	groupId: 'master-group',
@@ -145,45 +145,29 @@ export const runConsumer = async () => {
 						return;
 					}
 
-					// Kiểm tra xem worker có đang xử lý batch nào không
-					const batchInfoRaw = await redis.hget('worker:batchInfo', workerId);
+					// Thêm acquire lock với timeout
+					const hasLock = await acquireLock(workerId, 5000);
+					if (!hasLock) {
+						console.warn(`⚠️ Cannot acquire lock for worker ${workerId}`);
+						return;
+					}
 
-					if (workerStatus === 'done') {
-						if (!batchInfoRaw) {
-							// Nếu không có batch đang xử lý, an toàn để set status = 1
-							console.log(`🆓 Worker ${workerId} is free and ready.`);
-							await redis.hset('worker:status', workerId, '1');
-							await redis.hdel('worker:batchInfo', workerId);
-							await releaseLock(workerId);
-						} else {
-							// Nếu còn batch đang xử lý, log warning
-							console.warn(`⚠️ Worker ${workerId} reported done but still has active batch`);
+					try {
+						if (workerStatus === 'done') {
+							const multi = redis.multi();
+							multi.hset('worker:status', workerId, '1');
+							await multi.exec();
+						} else if (workerStatus === 'new') {
+							const { partitions } = data;
+							const multi = redis.multi();
+							multi.hset('worker:status', workerId, '1');
+							multi.hset('worker:partition', workerId, JSON.stringify(partitions));
+							multi.hdel('worker:batchInfo', workerId);
+							await multi.exec();
 						}
-					} else if (workerStatus === 'new') {
-						const { partitions } = data;
-						if (!partitions) {
-							console.warn(`⚠️ Worker ${workerId} sent 'new' status without partitions info`);
-							return;
-						}
-
-						console.log(`🔄 Worker ${workerId} updating partitions after rebalance:`, partitions);
-
-						try {
-
-							// Cập nhật status và partition mới
-							await redis.hset('worker:status', workerId, '1');
-							await redis.hset('worker:partition', workerId, JSON.stringify(partitions));
-							await redis.hdel('worker:batchInfo', workerId);
-							await releaseLock(workerId);
-
-							// Kiểm tra và xóa thông tin batch cũ nếu có
-
-
-							console.log(`✅ Successfully updated partitions for worker ${workerId}`);
-						} catch (error) {
-							console.error(`❌ Failed to update worker ${workerId} after rebalance:`, error);
-							// Có thể thêm retry logic ở đây nếu cần
-						}
+					} finally {
+						// Luôn release lock trong finally block
+						await releaseLock(workerId);
 					}
 				}
 				// --- Xử lý Worker báo cáo tiến trình ---
@@ -193,7 +177,6 @@ export const runConsumer = async () => {
 						batchId,
 						processing,
 						total,
-						error, // Optional error field from worker
 					} = data;
 
 					// --- Validate data ---
@@ -230,27 +213,6 @@ export const runConsumer = async () => {
 					);
 					// Có thể lưu tiến trình vào Redis nếu cần theo dõi chi tiết, nhưng không bắt buộc
 					multi.hset('worker:processing', batchId, processedCount);
-
-					// --- Check for errors reported by worker ---
-					if (error) {
-						console.error(
-							`❌ Worker ${workerId} reported error for batch ${batchId}:`,
-							error
-						);
-						logMessage(
-							`Worker ${workerId} error on batch ${batchId}: ${error}`
-						);
-						// Worker báo lỗi -> Coi như xong việc (lỗi), reset worker
-						multi.set(`worker:status`, workerId, '1');
-						await releaseLock(workerId); // Giải phóng lock
-						multi.hdel('worker:batchInfo', workerId); // Xóa thông tin batch đang làm
-						await multi.exec();
-						console.log(
-							`   -> Worker ${workerId} reset to ready (1) due to reported error.`
-						);
-						// TODO: Xử lý batchId bị lỗi (ghi log, đưa vào hàng đợi lỗi, ...)
-						return; // Dừng xử lý message này
-					}
 					// --- Check if batch is completed ---
 					if (processedCount === totalCount) {
 						console.log(
