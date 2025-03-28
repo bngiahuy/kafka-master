@@ -19,20 +19,28 @@ async function sendHeartbeat(masterId) {
 		} catch (error) {
 			console.error(`${masterId}: Lỗi khi gửi heartbeat:`, error);
 		}
-		await new Promise((resolve) => setTimeout(resolve, 2000)); // Gửi heartbeat mỗi 2 giây
+		await new Promise((resolve) => setTimeout(resolve, 3000)); // Gửi heartbeat mỗi 3 giây
 	}
 }
 
 export const startLeaderElection = async (masterId, onBecomeLeader) => {
-	const consumer = kafka.consumer({ groupId: 'leader-election-group' });
+	const consumer = kafka.consumer({
+		groupId: 'leader-election-group',
+		allowAutoTopicCreation: true,
+		retry: {
+			initialRetryTime: 100,
+			retries: 8,
+		},
+		sessionTimeout: 30000,
+		heartbeatInterval: 3000,
+	});
 	await consumer.connect();
 	await consumer.subscribe({
 		topic: process.env.KAFKA_MASTER_HEARTBEAT_TOPIC,
 		fromBeginning: true,
 	});
 
-	// Bắt đầu gửi heartbeat
-	sendHeartbeat(masterId).catch(console.error);
+
 
 	console.log(`${masterId} khởi động, kiểm tra trạng thái...`);
 	let hasOtherLeader = false;
@@ -42,7 +50,8 @@ export const startLeaderElection = async (masterId, onBecomeLeader) => {
 	// Vấn đề nằm ở phương thức chạy consumer
 	// Thêm biến để đánh dấu đã hoàn thành quá trình khởi tạo
 	let initializationComplete = false;
-
+	// Bắt đầu gửi heartbeat
+	sendHeartbeat(masterId).catch(console.error);
 	consumer.run({
 		eachMessage: async ({ message }) => {
 			const messageKey = message.key.toString();
@@ -56,9 +65,11 @@ export const startLeaderElection = async (masterId, onBecomeLeader) => {
 		},
 	});
 
+
+
 	// Chờ 5 giây để kiểm tra leader - Đảm bảo đã nhận đủ heartbeat
-	console.log(`${masterId}: Đang chờ 5.5 giây để thu thập heartbeat...`);
-	await new Promise((resolve) => setTimeout(resolve, 5500));
+	console.log(`${masterId}: Đang chờ 15 giây để thu thập heartbeat...`);
+	await new Promise((resolve) => setTimeout(resolve, 15000));
 
 	// Sau khi chờ, đánh dấu quá trình khởi tạo hoàn tất
 	initializationComplete = true;
@@ -67,12 +78,13 @@ export const startLeaderElection = async (masterId, onBecomeLeader) => {
 		isLeader = true;
 		console.log(`${masterId}: Không thấy master khác, tôi là leader!`);
 		onBecomeLeader(masterId);
+		return;
 	} else {
 		console.log(`${masterId}: Đã có master khác làm leader, tôi sẽ standby.`);
 	}
 
 	// Theo dõi trạng thái liên tục
-	const timeout = 10000; // 10 giây timeout
+	const timeout = 20000; // 20 giây timeout
 
 	while (true) {
 		// Chỉ kiểm tra timeout khi đã hoàn thành khởi tạo và không phải leader
@@ -80,6 +92,7 @@ export const startLeaderElection = async (masterId, onBecomeLeader) => {
 			console.log(`${masterId}: Master khác đã chết (${Math.floor((Date.now() - lastHeartbeat) / 1000)}s không có heartbeat), tôi trở thành leader!`);
 			isLeader = true;
 			onBecomeLeader(masterId);
+			return;
 		}
 		await new Promise((resolve) => setTimeout(resolve, 1000)); // Kiểm tra mỗi giây
 	}

@@ -4,6 +4,7 @@ import mainRouter from './routes/mainRoute.js';
 import { rateLimit } from 'express-rate-limit';
 import { startBatchAssigner } from './producers/kafkaProducer.js';
 import { startLeaderElection } from './leaderElection/index.js';
+import { randomUUID } from 'crypto';
 
 const app = express();
 const port = process.env.API_SERVER_PORT || 3001;
@@ -38,5 +39,5 @@ const startApp = async (masterId) => {
 	// Bắt đầu leader election mà không cần biết otherMasterId
 	await startLeaderElection(masterId, onBecomeLeader);
 };
-const masterId = 'master-' + Math.random().toString(36).substring(2, 15);
+const masterId = 'master-' + randomUUID();
 startApp(masterId);
