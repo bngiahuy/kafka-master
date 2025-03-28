@@ -202,7 +202,6 @@ export const runConsumer = async () => {
 					const multi = redis.multi();
 					// --- Update last seen time ---
 					multi.set(`lastSeen:${workerId}`, Date.now(), 'EX', 60 * 5); // Cập nhật và tự hết hạn sau 5 phút nếu không có cập nhật mới
-					// console.log(`   -> Updated lastSeen for ${workerId}`);
 
 					// --- Log progress ---
 					console.log(
@@ -211,7 +210,6 @@ export const runConsumer = async () => {
 					logMessage(
 						`${workerId} progress ${batchId}: ${processedCount}/${totalCount}`
 					);
-					// Có thể lưu tiến trình vào Redis nếu cần theo dõi chi tiết, nhưng không bắt buộc
 					multi.hset('worker:processing', batchId, processedCount);
 					// --- Check if batch is completed ---
 					if (processedCount === totalCount) {
@@ -223,30 +221,22 @@ export const runConsumer = async () => {
 						console.log(
 							`   -> Worker ${workerId} status set to 1 (Ready) and lock released.`
 						);
-
-
 					}
 					await multi.exec();
 				}
 			},
 		});
+
+
 		stopMonitoring = checkWorkerStatus();
-
-
 		// Giữ consumer chạy
 		console.log('⏳ Consumer is running. Waiting for messages...');
-		// Để ngăn hàm kết thúc ngay lập tức, bạn có thể dùng một promise không bao giờ resolve
-		// Hoặc dựa vào việc process không tự thoát
-		// await new Promise(() => {});
 	} catch (error) {
 		console.error('❌ Fatal error in consumer:', error);
 		if (stopMonitoring) {
 			console.log('Stopping worker monitor due to consumer error...');
 			stopMonitoring(); // Dừng interval nếu có lỗi
 		}
-		// Cân nhắc việc cố gắng kết nối lại hoặc thoát process
-		// await consumer.disconnect(); // Thử ngắt kết nối
-		// process.exit(1);
 	}
 
 	// Xử lý tín hiệu dừng cho consumer
