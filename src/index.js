@@ -21,31 +21,22 @@ const apiRateLimitting = rateLimit({
 });
 
 const startApp = async (masterId) => {
-	let isLeader = false;
 
 	// Callback khi trở thành leader
 	const onBecomeLeader = async (leaderId) => {
-		if (!isLeader) {
-			console.log(`${leaderId} bắt đầu chạy consumer và API...`);
-			isLeader = true;
-			await runConsumer(); // Chạy consumer khi là leader
-			await startBatchAssigner();
-			app.use(express.json());
-			// app.use(apiRateLimitting);
-			app.use('/api', mainRouter); // API chỉ hoạt động khi là leader
-			app.listen(port, () => {
-				console.log(`Server ${leaderId} is running on port ${port}`);
-			});
-		}
+		console.log(`${leaderId} bắt đầu chạy consumer và API...`);
+		await runConsumer(); // Chạy consumer khi là leader
+		await startBatchAssigner();
+		app.use(express.json());
+		// app.use(apiRateLimitting);
+		app.use('/api', mainRouter); // API chỉ hoạt động khi là leader
+		app.listen(port, () => {
+			console.log(`Server ${leaderId} is running on port ${port}`);
+		});
 	};
 
 	// Bắt đầu leader election mà không cần biết otherMasterId
 	await startLeaderElection(masterId, onBecomeLeader);
-
-	// Nếu không phải leader, không khởi động server Express
-	if (!isLeader) {
-		console.log(`${masterId} đang ở chế độ standby...`);
-	}
 };
 const masterId = 'master-' + Math.random().toString(36).substring(2, 15);
 startApp(masterId);
