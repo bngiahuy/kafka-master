@@ -86,8 +86,7 @@ const checkWorkerStatus = () => {
 					timeSinceLastSeen > estimatedProcessingTime
 				) {
 					console.warn(
-						`⚠️ Worker ${workerId} timeout detected! Assigned ${
-							timeSinceAssigned / 1000
+						`⚠️ Worker ${workerId} timeout detected! Assigned ${timeSinceAssigned / 1000
 						}s ago, last seen ${timeSinceLastSeen / 1000}s ago. Resetting...`
 					);
 					logMessage(`Worker ${workerId} timeout. Resetting.`);
@@ -111,12 +110,6 @@ const checkWorkerStatus = () => {
 	return () => clearInterval(intervalId); // Trả về hàm để dừng interval
 };
 
-// Hàm helper để log mọi thay đổi status
-const setWorkerStatus = async (workerId, status) => {
-	console.log(`🔄 Setting worker ${workerId} status to ${status}`);
-	await redis.hset('worker:status', workerId, status);
-	console.log(`✅ Worker ${workerId} status set to ${status}`);
-};
 
 export const runConsumer = async () => {
 	let stopMonitoring = null; // Biến để giữ hàm dừng monitor
@@ -126,17 +119,15 @@ export const runConsumer = async () => {
 
 		await consumer.subscribe({
 			topics: [
-				process.env.KAFKA_TOPIC_NAME_WORKER, // Progress updates
 				process.env.KAFKA_TOPIC_NAME_WORKER_FREE, // Worker registration/ready
+				process.env.KAFKA_TOPIC_NAME_WORKER, // Progress updates
 			],
-			fromBeginning: true, // Thường không cần xử lý lại message cũ khi consumer khởi động lại
+			fromBeginning: false, // Thường không cần xử lý lại message cũ khi consumer khởi động lại
 		});
 		console.log(
 			`👂 Consumer subscribed to topics: ${process.env.KAFKA_TOPIC_NAME_WORKER}, ${process.env.KAFKA_TOPIC_NAME_WORKER_FREE}`
 		);
 
-		// Khởi động worker monitor sau khi connect và subscribe thành công
-		stopMonitoring = checkWorkerStatus();
 
 		await consumer.run({
 			// Để giảm số lượng message xử lý đồng thời, bạn có thể thay đổi giá trị này
@@ -151,15 +142,16 @@ export const runConsumer = async () => {
 						console.warn('⚠️ Received invalid WORKER_FREE message:', data);
 						return;
 					}
-					
+
 					// Kiểm tra xem worker có đang xử lý batch nào không
 					const batchInfoRaw = await redis.hget('worker:batchInfo', workerId);
-					
+
 					if (workerStatus === 'done') {
 						if (!batchInfoRaw) {
 							// Nếu không có batch đang xử lý, an toàn để set status = 1
 							console.log(`🆓 Worker ${workerId} is free and ready.`);
 							await redis.hset('worker:status', workerId, '1');
+							await redis.hdel('worker:batchInfo', workerId);
 							await releaseLock(workerId);
 						} else {
 							// Nếu còn batch đang xử lý, log warning
@@ -167,12 +159,29 @@ export const runConsumer = async () => {
 						}
 					} else if (workerStatus === 'new') {
 						const { partitions } = data;
-						console.log(`🆕 New worker ${workerId} registered with partitions:`, partitions);
-						const multi = redis.multi();
-						multi.hset('worker:status', workerId, '1');
-						multi.hset('worker:partition', workerId, JSON.stringify(partitions));
-						await multi.exec();
-						await releaseLock(workerId);
+						if (!partitions) {
+							console.warn(`⚠️ Worker ${workerId} sent 'new' status without partitions info`);
+							return;
+						}
+
+						console.log(`🔄 Worker ${workerId} updating partitions after rebalance:`, partitions);
+
+						try {
+
+							// Cập nhật status và partition mới
+							await redis.hset('worker:status', workerId, '1');
+							await redis.hset('worker:partition', workerId, JSON.stringify(partitions));
+							await redis.hdel('worker:batchInfo', workerId);
+							await releaseLock(workerId);
+
+							// Kiểm tra và xóa thông tin batch cũ nếu có
+
+
+							console.log(`✅ Successfully updated partitions for worker ${workerId}`);
+						} catch (error) {
+							console.error(`❌ Failed to update worker ${workerId} after rebalance:`, error);
+							// Có thể thêm retry logic ở đây nếu cần
+						}
 					}
 				}
 				// --- Xử lý Worker báo cáo tiến trình ---
@@ -240,18 +249,13 @@ export const runConsumer = async () => {
 						// TODO: Xử lý batchId bị lỗi (ghi log, đưa vào hàng đợi lỗi, ...)
 						return; // Dừng xử lý message này
 					}
-
+					await multi.exec();
 					// --- Check if batch is completed ---
 					if (processedCount === totalCount) {
 						console.log(
 							`✅ Worker ${workerId} completed batch ${batchId} (${processedCount}/${totalCount}).`
 						);
-						logMessage(`Worker ${workerId} completed batch ${batchId}`);
-
-						// Giải phóng worker: Đặt lại trạng thái và giải phóng lock
-						// await setWorkerStatus(workerId, '1');
-						multi.set(`worker:status`, workerId, '1');
-						await releaseLock(workerId);
+						// logMessage(`Worker ${workerId} completed batch ${batchId}`);
 						multi.hdel('worker:batchInfo', workerId); // Xóa thông tin batch đã xong
 						console.log(
 							`   -> Worker ${workerId} status set to 1 (Ready) and lock released.`
@@ -259,15 +263,18 @@ export const runConsumer = async () => {
 						await multi.exec();
 
 
-						// **QUAN TRỌNG: KHÔNG gọi assignBatches() từ đây**
-						// Vòng lặp trong producer sẽ tự động tìm thấy worker này khi nó cần.
-					} else {
-						// Chỉ là cập nhật tiến trình, không làm gì thêm ở consumer
-						// console.log(`   -> Worker ${workerId} processing ${batchId}: ${processedCount}/${totalCount}`);
+						// 	// **QUAN TRỌNG: KHÔNG gọi assignBatches() từ đây**
+						// 	// Vòng lặp trong producer sẽ tự động tìm thấy worker này khi nó cần.
+						// } else {
+						// 	// Chỉ là cập nhật tiến trình, không làm gì thêm ở consumer
+						// 	// console.log(`   -> Worker ${workerId} processing ${batchId}: ${processedCount}/${totalCount}`);
+						// }
 					}
 				}
 			},
 		});
+		stopMonitoring = checkWorkerStatus();
+
 
 		// Giữ consumer chạy
 		console.log('⏳ Consumer is running. Waiting for messages...');

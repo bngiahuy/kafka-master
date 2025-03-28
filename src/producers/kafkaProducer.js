@@ -102,7 +102,7 @@ export const startBatchAssigner = async () => {
 
 			// --- Logic chia chunk và gán worker (giữ nguyên phần lớn) ---
 			const chunkSizeRaw = await redis.get('numBatches');
-			const chunkSize = parseInt(chunkSizeRaw) || 1000;
+			const chunkSize = parseInt(chunkSizeRaw) || 500;
 			const fileChunks = [];
 			for (let i = 0; i < lines.length; i += chunkSize) {
 				const chunk = lines.slice(i, i + chunkSize);
