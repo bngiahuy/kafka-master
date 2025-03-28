@@ -71,7 +71,7 @@ const checkWorkerStatus = () => {
 					continue;
 				}
 
-				const estimatedProcessingTime = (batchInfo.total || 0) * 100 + 7000; // 0.1s/item
+				const estimatedProcessingTime = (batchInfo.total || 0) * 300 + 30000; // 0.1s/item
 				const timeSinceAssigned = now - batchInfo.assignedAt;
 
 				// Kiểm tra thêm lastSeen để chắc chắn worker còn hoạt động
@@ -91,13 +91,15 @@ const checkWorkerStatus = () => {
 					);
 					logMessage(`Worker ${workerId} timeout. Resetting.`);
 					// Xóa thông tin liên quan đến worker này
-					await redis.hdel('worker:status', workerId);
-					await redis.hdel('worker:partition', workerId);
-					await redis.hdel('worker:batchInfo', workerId);
-					await redis.del(`lastSeen:${workerId}`);
-					await redis.hdel('worker:processing', batchInfo.batchId); // Xóa tiến trình của batchId nếu có
+					const multi = redis.multi();
+					multi.hdel('worker:status', workerId);
+					multi.hdel('worker:partition', workerId);
+					multi.hdel('worker:batchInfo', workerId);
+					multi.del(`lastSeen:${workerId}`);
+					multi.hdel('worker:processing', batchInfo.batchId); // Xóa tiến trình của batchId nếu có
 					await releaseLock(workerId); // Quan trọng: giải phóng lock
 					console.log(`🧹 Cleaned up timeout worker ${workerId}.`);
+					await multi.exec();
 
 					// Skip batch id này
 				}
@@ -249,7 +251,6 @@ export const runConsumer = async () => {
 						// TODO: Xử lý batchId bị lỗi (ghi log, đưa vào hàng đợi lỗi, ...)
 						return; // Dừng xử lý message này
 					}
-					await multi.exec();
 					// --- Check if batch is completed ---
 					if (processedCount === totalCount) {
 						console.log(
@@ -260,16 +261,10 @@ export const runConsumer = async () => {
 						console.log(
 							`   -> Worker ${workerId} status set to 1 (Ready) and lock released.`
 						);
-						await multi.exec();
 
 
-						// 	// **QUAN TRỌNG: KHÔNG gọi assignBatches() từ đây**
-						// 	// Vòng lặp trong producer sẽ tự động tìm thấy worker này khi nó cần.
-						// } else {
-						// 	// Chỉ là cập nhật tiến trình, không làm gì thêm ở consumer
-						// 	// console.log(`   -> Worker ${workerId} processing ${batchId}: ${processedCount}/${totalCount}`);
-						// }
 					}
+					await multi.exec();
 				}
 			},
 		});

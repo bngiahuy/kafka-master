@@ -1,0 +1,9 @@
+services:
+  python-app:
+    build: .
+    deploy:
+      replicas: 4
+      restart_policy:
+        condition: on-failure
+    working_dir: /app
+    command: python worker.py

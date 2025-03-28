@@ -1,6 +1,10 @@
 node_modules
 input_ip_data
+logs
 
 .env
 *.bat
 *.log
+
+scanned
+worker_id.txt
