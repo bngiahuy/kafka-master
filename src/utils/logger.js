@@ -1,11 +1,9 @@
 import fs from 'fs';
 import path from 'path';
-import { format } from 'date-fns';
 
 // Thêm hàm để ghi log vào file nhất định
 export const logToFile = (filePath, message) => {
-	const timestamp = format(new Date(), 'yyyy-MM-dd HH:mm:ss');
-	const logMessage = `[${timestamp}] ${message}\n`;
+	const content = `[${new Date().toISOString()}] ${message}\n`;
 
 	try {
 		// Đảm bảo thư mục tồn tại
@@ -14,7 +12,7 @@ export const logToFile = (filePath, message) => {
 			fs.mkdirSync(dir, { recursive: true });
 		}
 
-		fs.appendFileSync(filePath, logMessage);
+		fs.appendFileSync(filePath, content);
 	} catch (err) {
 		console.error(`Lỗi khi ghi log vào file ${filePath}:`, err);
 	}
@@ -29,8 +27,7 @@ export const logBatchFailure = (batchInfo, reason) => {
 	logToFile('./logs/fail-batches.log', `${JSON.stringify(batchInfo)} - Reason: ${reason}`);
 };
 
-const logMessage = (message) => {
+export const logMessage = (message) => {
 	logToFile('./logs/general-logs.log', message);
 };
 
-export default logMessage;

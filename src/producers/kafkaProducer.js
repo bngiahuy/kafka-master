@@ -3,13 +3,12 @@ import kafka from '../configs/kafkaConfig.js';
 import fs from 'fs';
 import path from 'path';
 import redis from '../configs/redisConfig.js';
-import { randomUUID } from 'crypto';
-import logMessage from '../utils/logger.js';
+import { logMessage } from '../utils/logger.js';
 import { acquireLock, releaseLock } from '../utils/helper.js';
 
 const producer = kafka.producer();
 
-const BATCH_DIR = process.env.CLIENT_DATA_PATH + '/input';
+const DATA_DIR = process.env.CLIENT_DATA_PATH + '/input';
 const PROCESSED_FILES_KEY = 'processed:files'; // Key cho Redis Set
 const CHECK_INTERVAL = 5000; // Kiểm tra file mới mỗi 5 giây (5000ms)
 const WORKER_POLL_INTERVAL = 100;
@@ -22,7 +21,7 @@ const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const getNewFiles = async () => {
 	try {
 		const allFilesInDir = fs
-			.readdirSync(BATCH_DIR)
+			.readdirSync(DATA_DIR)
 			.filter((f) => f.endsWith('.txt'));
 		const processedFiles = await redis.smembers(PROCESSED_FILES_KEY);
 		const processedFilesSet = new Set(processedFiles); // Chuyển sang Set để kiểm tra nhanh hơn
@@ -48,9 +47,8 @@ export const startBatchAssigner = async () => {
 	}
 
 	while (isRunning) {
-		const batchQueue = await getNewFiles(); // Lấy danh sách file mới cần xử lý
-
-		if (batchQueue.length === 0) {
+		const fileQueue = await getNewFiles(); // Lấy danh sách file mới cần xử lý
+		if (fileQueue.length === 0) {
 			console.log(
 				`🕒 No new files found. Waiting ${CHECK_INTERVAL / 1000}s...`
 			);
@@ -61,22 +59,22 @@ export const startBatchAssigner = async () => {
 
 		process.stdout.write('\n'); // New line when files found
 		console.log(
-			`📂 Found ${batchQueue.length} new files to process:`,
-			batchQueue
+			`📂 Found ${fileQueue.length} new files to process:`,
+			fileQueue
 		);
 
-		// ---- Bắt đầu xử lý các file trong batchQueue hiện tại ----
-		while (batchQueue.length > 0 && isRunning) {
+		// ---- Bắt đầu xử lý các file trong fileQueue hiện tại ----
+		while (fileQueue.length > 0 && isRunning) {
 			// Thêm kiểm tra isRunning ở đây nữa
-			const currentBatchFile = batchQueue.shift(); // Lấy và xóa file khỏi hàng đợi
-			if (!currentBatchFile) continue;
+			const currentFile = fileQueue.shift(); // Lấy và xóa file khỏi hàng đợi
+			if (!currentFile) continue;
 
-			console.log(`\n⏳ Processing file: ${currentBatchFile}`);
-			console.log('Remaining in current queue: ', batchQueue);
+			console.log(`\n⏳ Processing file: ${currentFile}`);
+			console.log('Remaining in current queue: ', fileQueue);
 
-			const batchIdBase =
-				path.basename(currentBatchFile, '.txt') || randomUUID();
-			const filePath = path.join(BATCH_DIR, currentBatchFile);
+			const fileIdBase =
+				path.basename(currentFile, '.txt');
+			const filePath = path.join(DATA_DIR, currentFile);
 			let lines;
 			try {
 				lines = fs
@@ -84,42 +82,38 @@ export const startBatchAssigner = async () => {
 					.split('\n')
 					.filter((line) => line.trim());
 			} catch (err) {
-				console.error(`❌ Error reading file ${currentBatchFile}:`, err);
-				logMessage(`Error reading file ${currentBatchFile}: ${err.message}`);
-				// Không thêm lại vào Redis Set vì file này chưa được xử lý
+				console.error(`❌ Error reading file ${currentFile}:`, err);
+				logMessage(`Error reading file ${currentFile}: ${err.message}`);
 				continue; // Bỏ qua file lỗi này trong hàng đợi hiện tại
 			}
 
 			if (lines.length === 0) {
 				console.warn(
-					`⚠️ File ${currentBatchFile} is empty. Marking as processed.`
+					`⚠️ File ${currentFile} is empty. Marking as processed.`
 				);
-				logMessage(`Skipped empty file: ${currentBatchFile}`);
-				// Đánh dấu file rỗng là đã xử lý để không đọc lại
-				await redis.sadd(PROCESSED_FILES_KEY, currentBatchFile);
+				logMessage(`Skipped empty file: ${currentFile}`);
+				await redis.sadd(PROCESSED_FILES_KEY, currentFile);
 				continue;
 			}
 
 			// --- Logic chia chunk và gán worker (giữ nguyên phần lớn) ---
 			const chunkSizeRaw = await redis.get('numBatches');
 			const chunkSize = parseInt(chunkSizeRaw) || 500;
-			const fileChunks = [];
-			for (let i = 0; i < lines.length; i += chunkSize) {
-				const chunk = lines.slice(i, i + chunkSize);
-				const chunkIndex = Math.floor(i / chunkSize);
-				const chunkId = `${batchIdBase}_chunk_${chunkIndex}`;
-				fileChunks.push({ chunkId, chunk });
+			if (await redis.llen('master:fileChunks') === 0) {
+				// Nếu fileChunks rỗng thì chia chunk và gán worker
+				for (let i = 0; i < lines.length; i += chunkSize) {
+					const chunk = lines.slice(i, i + chunkSize);
+					const chunkIndex = Math.floor(i / chunkSize);
+					const chunkId = `${fileIdBase}_chunk_${chunkIndex}`;
+					await redis.rpush('master:fileChunks', JSON.stringify({ chunkId, chunk }));
+				}
 			}
-			console.log(`  -> Total Chunks: ${fileChunks.length}`);
-
-			let assignedChunkCount = 0;
-			const totalChunks = fileChunks.length;
-			const chunksToAssign = [...fileChunks];
+			// Nếu fileChunks không rỗng thì tiếp tục xử lý 
+			console.log(`  -> Total Chunks: ${await redis.llen('master:fileChunks')}`);
 
 			let fileProcessingSuccess = true; // Cờ đánh dấu file xử lý thành công
 
-			while (assignedChunkCount < totalChunks && isRunning) {
-				// Thêm kiểm tra isRunning
+			while ((await redis.llen('master:fileChunks')) > 0 && isRunning) {
 				let chosenWorker = null;
 				let lockedWorkerId = null;
 
@@ -133,9 +127,6 @@ export const startBatchAssigner = async () => {
 					await delay(WORKER_POLL_INTERVAL);
 					if (!isRunning) break; // Thoát nếu nhận tín hiệu dừng trong lúc đợi worker
 					continue;
-				} else if (assignedChunkCount > 0) {
-					// Chỉ xuống dòng nếu không phải lần đầu tìm worker cho file này
-					process.stdout.write('\n');
 				}
 
 				for (const workerId of readyWorkers) {
@@ -162,15 +153,14 @@ export const startBatchAssigner = async () => {
 				if (!isRunning) break; // Thoát vòng lặp gán chunk nếu nhận tín hiệu dừng
 
 				if (chosenWorker) {
-					const chunkToAssign = chunksToAssign.shift();
+					const chunkToAssign = await redis.lpop('master:fileChunks');
 					if (!chunkToAssign) {
 						console.error('   ❌ Logic error: No more chunks to assign.');
 						if (lockedWorkerId) await releaseLock(lockedWorkerId);
 						fileProcessingSuccess = false; // Đánh dấu file thất bại
 						break;
 					}
-					const { chunkId, chunk } = chunkToAssign;
-
+					const { chunkId, chunk } = JSON.parse(chunkToAssign);
 					await redis.hset('worker:status', chosenWorker, '0');
 					console.log(`   🚦 Marked worker ${chosenWorker} as busy (0)`);
 
@@ -180,7 +170,6 @@ export const startBatchAssigner = async () => {
 					);
 					let partitions;
 					try {
-						// ... (logic kiểm tra partition giữ nguyên) ...
 						if (!partitionRaw) throw new Error('No partition info found');
 						partitions = JSON.parse(partitionRaw);
 						if (!Array.isArray(partitions) || partitions.length === 0) {
@@ -191,14 +180,11 @@ export const startBatchAssigner = async () => {
 							`   ❌ Partition error for ${chosenWorker}: ${err.message}`
 						);
 						await redis.hset('worker:status', chosenWorker, '0');
-						// await redis.hdel('worker:status', chosenWorker);
-						// await redis.hdel('worker:partition', chosenWorker);
-						// await redis.hdel('worker:batchInfo', chosenWorker);
 						if (lockedWorkerId) await releaseLock(lockedWorkerId);
 						console.log(
 							`   🔧 Reset worker ${chosenWorker} to ready (1) and released lock.`
 						);
-						chunksToAssign.unshift(chunkToAssign);
+						await redis.lpush('master:fileChunks', chunkToAssign);
 						chosenWorker = null;
 						await delay(500);
 						continue; // Thử tìm worker khác
@@ -220,10 +206,13 @@ export const startBatchAssigner = async () => {
 							})
 						);
 						await sendChunkToKafka(chosenWorker, chunkId, chunk, partition);
-						assignedChunkCount++;
-						console.log(
-							`   ✅ Chunk ${chunkId} sent. Assigned ${assignedChunkCount}/${totalChunks}.`
-						);
+						console.log(`   🔄 Assigned chunk ${chunkId} to ${chosenWorker}`);
+
+						// THÊM MỚI: Kiểm tra và áp dụng cập nhật đang chờ
+						const needsUpdate = await redis.exists(`worker:needs:update:${chosenWorker}`);
+						if (needsUpdate) {
+							console.log(`⚠️ Worker ${chosenWorker} has pending updates that will be applied later`);
+						}
 					} catch (err) {
 						console.error(
 							`   ❌ Send/Assign error for chunk ${chunkId} to ${chosenWorker}:`,
@@ -233,17 +222,11 @@ export const startBatchAssigner = async () => {
 							`Failed assign/send chunk ${chunkId} to ${chosenWorker}: ${err.message}`
 						);
 						await redis.hset('worker:status', chosenWorker, '0');
-						// await redis.hdel('worker:status', chosenWorker);
-						// await redis.hdel('worker:partition', chosenWorker);
-						// await redis.hdel('worker:batchInfo', chosenWorker);
 						if (lockedWorkerId) await releaseLock(lockedWorkerId);
 						console.log(
 							`   🔧 Reset worker ${chosenWorker} to ready (1) and released lock due to send error.`
 						);
-						chunksToAssign.unshift(chunkToAssign);
-						// Cân nhắc dừng xử lý file này nếu lỗi gửi liên tục
-						// fileProcessingSuccess = false;
-						// break;
+						await redis.lpush('master:fileChunks', chunkToAssign);
 						await delay(500); // Chờ chút trước khi thử lại
 					}
 				} else {
@@ -256,34 +239,34 @@ export const startBatchAssigner = async () => {
 			if (!isRunning) break; // Thoát vòng lặp xử lý file nếu nhận tín hiệu dừng
 
 			// --- Đánh dấu file đã xử lý vào Redis SET ---
-			if (assignedChunkCount === totalChunks && fileProcessingSuccess) {
+			if ((await redis.llen('master:fileChunks')) === 0 && fileProcessingSuccess) {
 				try {
-					await redis.sadd(PROCESSED_FILES_KEY, currentBatchFile);
+					await redis.sadd(PROCESSED_FILES_KEY, currentFile);
 					console.log(
-						`💾 Marked file "${currentBatchFile}" as processed in Redis.`
+						`💾 Marked file "${currentFile}" as processed in Redis.`
 					);
-					logMessage('Batch file marked as processed: ' + currentBatchFile);
+					logMessage('Batch file marked as processed: ' + currentFile);
 				} catch (redisErr) {
 					console.error(
-						`❌ Error marking file "${currentBatchFile}" as processed in Redis:`,
+						`❌ Error marking file "${currentFile}" as processed in Redis:`,
 						redisErr
 					);
 					// Cân nhắc: Nếu lỗi ở đây, file này có thể bị xử lý lại lần sau.
 				}
 			} else if (!fileProcessingSuccess) {
 				console.error(
-					`❌ File "${currentBatchFile}" processing failed. It will be retried later.`
+					`❌ File "${currentFile}" processing failed. It will be retried later.`
 				);
-				logMessage(`File "${currentBatchFile}" processing failed. Will retry.`);
+				logMessage(`File "${currentFile}" processing failed. Will retry.`);
 			} else {
 				console.warn(
-					`⚠️ File "${currentBatchFile}" processing interrupted. It will be retried later.`
+					`⚠️ File "${currentFile}" processing interrupted. It will be retried later.`
 				);
 				logMessage(
-					`File "${currentBatchFile}" processing interrupted. Will retry.`
+					`File "${currentFile}" processing interrupted. Will retry.`
 				);
 			}
-		} // --- Kết thúc vòng lặp xử lý các file trong batchQueue hiện tại ---
+		} // --- Kết thúc vòng lặp xử lý các file trong fileQueue hiện tại ---
 	} // --- Kết thúc vòng lặp chính (khi isRunning = false) ---
 
 	console.log('🛑 Batch assignment loop stopped.');

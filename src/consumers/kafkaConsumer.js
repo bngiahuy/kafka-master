@@ -1,8 +1,11 @@
 import kafka from '../configs/kafkaConfig.js';
 import redis from '../configs/redisConfig.js';
 import 'dotenv/config';
-import logMessage from '../utils/logger.js';
+import { logMessage, logBatchFailure, logBatchSuccess } from '../utils/logger.js';
 import { releaseLock, acquireLock } from '../utils/helper.js'; // Đảm bảo import đúng
+import fs from 'fs';
+import path from 'path';
+import { startWorkerUpdater } from '../utils/workerManager.js';
 
 const consumer = kafka.consumer({
 	groupId: 'master-group',
@@ -17,6 +20,23 @@ const consumer = kafka.consumer({
 	rebalanceTimeout: 60000,
 });
 
+const getChunkById = async (chunkId) => {
+	// Chunk id = vietnam_ips_1_chunk_1.txt, -> fileName = vietnam_ips_1.txt
+	const fileName = chunkId.split('_chunk_')[0] + '.txt';
+	const DATA_PATH = process.env.CLIENT_DATA_PATH + '/input';
+	const filePath = path.join(DATA_PATH, fileName);
+	const lines = fs
+		.readFileSync(filePath, 'utf-8')
+		.split('\n')
+		.filter((line) => line.trim());
+
+	const chunkIndex = chunkId.split('_chunk_')[1].split('.')[0];
+	const chunkSizeRaw = await redis.get('numBatches');
+	const chunkSize = parseInt(chunkSizeRaw, 10) || 500;
+	const start = chunkIndex * chunkSize;
+	return lines.slice(start, start + chunkSize);
+}
+
 // --- Worker Timeout Check --- (Giữ nguyên hoặc cải tiến nếu cần)
 const checkWorkerStatus = () => {
 	console.log('⏱️ Starting worker status monitor...');
@@ -27,7 +47,7 @@ const checkWorkerStatus = () => {
 			const now = Date.now();
 
 			if (Object.keys(workers).length === 0) {
-				// console.log("Monitor: No workers registered.");
+				console.log("Monitor: No workers registered.");
 				return;
 			}
 
@@ -72,18 +92,18 @@ const checkWorkerStatus = () => {
 					continue;
 				}
 
-				const estimatedProcessingTime = (batchInfo.total || 0) * 300 + 30000; // 0.1s/item
+				const estimatedProcessingTime = (process.env.WORKER_TIMEOUT || 80) * 1000;
 				const timeSinceAssigned = now - batchInfo.assignedAt;
 
 				// Kiểm tra thêm lastSeen để chắc chắn worker còn hoạt động
 				const lastSeenRaw = await redis.get(`lastSeen:${workerId}`);
 				const lastSeenTime = lastSeenRaw ? parseInt(lastSeenRaw, 10) : 0;
-				const timeSinceLastSeen = lastSeenTime ? now - lastSeenTime : Infinity; // Nếu chưa thấy -> coi như vô hạn
+				const timeSinceLastSeen = lastSeenTime > 0 ? now - lastSeenTime : Infinity; // Nếu chưa thấy -> coi như vô hạn
 
 				// Coi worker là timeout nếu thời gian kể từ khi gán VƯỢT QUÁ thời gian ước tính
 				// VÀ thời gian kể từ lần cuối thấy hoạt động cũng VƯỢT QUÁ timeout (hoặc chưa thấy bao giờ)
 				if (
-					timeSinceAssigned > estimatedProcessingTime &&
+					timeSinceAssigned > estimatedProcessingTime ||
 					timeSinceLastSeen > estimatedProcessingTime
 				) {
 					console.warn(
@@ -92,17 +112,25 @@ const checkWorkerStatus = () => {
 					);
 					logMessage(`Worker ${workerId} timeout. Resetting.`);
 					// Xóa thông tin liên quan đến worker này
+					// Skip batch id này, ghi lại lỗi vào log
 					const multi = redis.multi();
 					multi.hdel('worker:status', workerId);
 					multi.hdel('worker:partition', workerId);
 					multi.hdel('worker:batchInfo', workerId);
 					multi.del(`lastSeen:${workerId}`);
 					multi.hdel('worker:processing', batchInfo.batchId); // Xóa tiến trình của batchId nếu có
-					await releaseLock(workerId); // Quan trọng: giải phóng lock
 					console.log(`🧹 Cleaned up timeout worker ${workerId}.`);
 					await multi.exec();
+					await releaseLock(workerId); // Quan trọng: giải phóng lock
+					logBatchFailure({
+						workerId,
+						batchId: batchInfo.batchId,
+					}, 'Worker timeout');
 
-					// Skip batch id này
+					// Thêm lại chunk vào queue
+					const chunk = await getChunkById(batchInfo.batchId);
+					await redis.rpush('master:fileChunks', JSON.stringify({ chunkId: batchInfo.batchId, chunk }));
+					console.log(`🔄 Added chunk ${batchInfo.batchId} back to queue, size: ${chunk.length}`);
 				}
 			}
 		} catch (error) {
@@ -115,27 +143,29 @@ const checkWorkerStatus = () => {
 
 
 export const runConsumer = async () => {
-	let stopMonitoring = null; // Biến để giữ hàm dừng monitor
+	let stopMonitoring = null;
+	let stopWorkerUpdater = null; // Thêm biến để giữ hàm dừng worker updater
+
 	try {
 		await consumer.connect();
 		console.log('✅ Consumer connected');
 
 		await consumer.subscribe({
 			topics: [
-				process.env.KAFKA_TOPIC_NAME_WORKER_FREE, // Worker registration/ready
-				process.env.KAFKA_TOPIC_NAME_WORKER, // Progress updates
+				process.env.KAFKA_TOPIC_NAME_WORKER_FREE,
+				process.env.KAFKA_TOPIC_NAME_WORKER,
 			],
-			fromBeginning: false, // Thường không cần xử lý lại message cũ khi consumer khởi động lại
+			fromBeginning: false,
 		});
 		console.log(
 			`👂 Consumer subscribed to topics: ${process.env.KAFKA_TOPIC_NAME_WORKER}, ${process.env.KAFKA_TOPIC_NAME_WORKER_FREE}`
 		);
 
-
 		await consumer.run({
 			eachMessage: async ({ topic, partition, message }) => {
 				console.log(`\n📩 Received message on topic "${topic}", partition ${partition}`);
 				let data = JSON.parse(message.value.toString());
+
 				// --- Xử lý Worker đăng ký hoặc báo sẵn sàng ---
 				if (topic === process.env.KAFKA_TOPIC_NAME_WORKER_FREE) {
 					const { id: workerId, status: workerStatus } = data;
@@ -144,10 +174,38 @@ export const runConsumer = async () => {
 						return;
 					}
 
-					// Thêm acquire lock với timeout
+					// Đưa vào hàng đợi Redis nếu là cập nhật partition
+					if (workerStatus === 'new' && data.partitions) {
+						// Thay vì cố gắng lock, lưu thông tin vào Redis để xử lý sau
+						const updateData = {
+							partitions: JSON.stringify(data.partitions),
+							timestamp: Date.now(),
+							status: workerStatus
+						};
+
+						await redis.hmset(`worker:pending:update:${workerId}`, updateData);
+						await redis.set(`worker:needs:update:${workerId}`, '1', 'EX', 600);
+
+						console.log(`📝 Queued partition update for worker ${workerId}`);
+
+						// Vẫn cập nhật lastSeen để biết worker còn hoạt động
+						await redis.set(`lastSeen:${workerId}`, Date.now(), 'EX', 60 * 5);
+						return;
+					}
+
+					// Xử lý các trạng thái khác bình thường (như done)
 					const hasLock = await acquireLock(workerId, 5000);
 					if (!hasLock) {
-						console.warn(`⚠️ Cannot acquire lock for worker ${workerId}`);
+						console.log(`⚠️ Cannot acquire lock for worker ${workerId} - will queue update`);
+
+						// Đưa vào hàng đợi nếu không lấy được lock
+						const updateData = {
+							status: workerStatus,
+							timestamp: Date.now()
+						};
+
+						await redis.hmset(`worker:pending:update:${workerId}`, updateData);
+						await redis.set(`worker:needs:update:${workerId}`, '1', 'EX', 600);
 						return;
 					}
 
@@ -156,16 +214,9 @@ export const runConsumer = async () => {
 							const multi = redis.multi();
 							multi.hset('worker:status', workerId, '1');
 							await multi.exec();
-						} else if (workerStatus === 'new') {
-							const { partitions } = data;
-							const multi = redis.multi();
-							multi.hset('worker:status', workerId, '1');
-							multi.hset('worker:partition', workerId, JSON.stringify(partitions));
-							multi.hdel('worker:batchInfo', workerId);
-							await multi.exec();
 						}
+						// 'new' đã được xử lý ở trên
 					} finally {
-						// Luôn release lock trong finally block
 						await releaseLock(workerId);
 					}
 				}
@@ -215,7 +266,12 @@ export const runConsumer = async () => {
 						console.log(
 							`✅ Worker ${workerId} completed batch ${batchId} (${processedCount}/${totalCount}).`
 						);
-						// logMessage(`Worker ${workerId} completed batch ${batchId}`);
+						logBatchSuccess({
+							workerId,
+							batchId,
+							processedCount,
+							totalCount,
+						});
 						multi.hdel('worker:batchInfo', workerId); // Xóa thông tin batch đã xong
 						console.log(
 							`   -> Worker ${workerId} status set to 1 (Ready) and lock released.`
@@ -226,16 +282,15 @@ export const runConsumer = async () => {
 			},
 		});
 
-
+		// Khởi động các monitoring
 		stopMonitoring = checkWorkerStatus();
-		// Giữ consumer chạy
+		stopWorkerUpdater = startWorkerUpdater(); // Khởi động worker updater
+
 		console.log('⏳ Consumer is running. Waiting for messages...');
 	} catch (error) {
 		console.error('❌ Fatal error in consumer:', error);
-		if (stopMonitoring) {
-			console.log('Stopping worker monitor due to consumer error...');
-			stopMonitoring(); // Dừng interval nếu có lỗi
-		}
+		if (stopMonitoring) stopMonitoring();
+		if (stopWorkerUpdater) stopWorkerUpdater(); // Dừng worker updater nếu có lỗi
 	}
 
 	// Xử lý tín hiệu dừng cho consumer
@@ -247,6 +302,7 @@ export const runConsumer = async () => {
 			try {
 				console.log(`🔥 Process ${type}: ${err.message}`);
 				if (stopMonitoring) stopMonitoring();
+				if (stopWorkerUpdater) stopWorkerUpdater(); // Dừng worker updater khi có lỗi
 				await consumer.disconnect();
 				console.log('Consumer disconnected on error.');
 				process.exit(1);
@@ -261,6 +317,7 @@ export const runConsumer = async () => {
 			try {
 				console.log(`✋ Signal ${type} received. Shutting down consumer...`);
 				if (stopMonitoring) stopMonitoring();
+				if (stopWorkerUpdater) stopWorkerUpdater(); // Dừng worker updater khi shutdown
 				await consumer.disconnect();
 				console.log('Consumer disconnected gracefully.');
 			} finally {

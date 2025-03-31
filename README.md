@@ -77,3 +77,88 @@ KAFKA_TOPIC_NAME_WORKER_FREE= # The name of the Kafka topic that workers use to 
 docker-compose build && docker-compose up -d
 ```
 - You can use some API Endpoints above to monitor.
+
+Sure, here is the full Redis Key Reference translated into English:
+
+---
+
+# Redis Keys Reference
+
+Below is the list of Redis keys used in the system:
+
+## Master Management & Leader Election
+
+| Key | Type | Description |
+|-----|------|-------------|
+| `masters:list` | Sorted Set | List of registered masters, with score as the join timestamp |
+| `master:heartbeat:{masterId}` | String | Latest heartbeat timestamp of the master |
+| `master:active:leader` | String | ID of the current leader master |
+| `master:election:running` | String | Flag indicating an ongoing election process |
+| `master:fileChunks` | List | List of chunks waiting to be processed |
+
+## Worker Management
+
+| Key | Type | Description |
+|-----|------|-------------|
+| `worker:status` | Hash | Status of workers (1 = ready, 0 = busy) |
+| `worker:partition` | Hash | Partition information assigned to each worker |
+| `worker:batchInfo` | Hash | Batch information currently being processed by each worker |
+| `worker:processing` | Hash | Current processing progress for each batch |
+| `lastSeen:{workerId}` | String | Last seen timestamp of the worker |
+
+## File & Batch Processing
+
+| Key | Type | Description |
+|-----|------|-------------|
+| `processed:files` | Set | List of files that have been fully processed |
+| `numBatches` | String | Default chunk size (number of items per batch) |
+
+## Useful Redis Commands
+
+```bash
+# Check list of registered masters
+redis-cli ZRANGE masters:list 0 -1
+
+# Check current leader
+redis-cli GET master:active:leader
+
+# Check status of all workers
+redis-cli HGETALL worker:status
+
+# Check progress of all batches
+redis-cli HGETALL worker:processing
+
+# Check list of processed files
+redis-cli SMEMBERS processed:files
+
+# Check number of chunks waiting to be processed
+redis-cli LLEN master:fileChunks
+
+# View detailed info for a specific worker
+redis-cli HGET worker:batchInfo "your-worker-id"
+
+# Check when a worker was last active
+redis-cli GET lastSeen:your-worker-id
+```
+
+## Redis Keys Related to Files and Chunks
+
+### Completed files:
+```bash
+redis-cli SMEMBERS processed:files
+```
+
+### View chunks waiting to be processed:
+```bash
+redis-cli LRANGE master:fileChunks 0 -1
+```
+
+### View processing progress of all batches:
+```bash
+redis-cli HGETALL worker:processing
+```
+
+### Check which workers are handling which batches:
+```bash
+redis-cli HGETALL worker:batchInfo
+```

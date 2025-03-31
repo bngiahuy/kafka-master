@@ -27,25 +27,25 @@ services:
     container_name: redis
     ports:
       - '6379:6379'
-    #     # volumes:
-    #     #   - ./redis_data:/data
+    command: redis-server --save 60 1 --loglevel warning # Background save every 60 seconds if at least 1 key changed
+    volumes:
+      - ./redis_data:/data
     networks:
       - backend
 
-  nodeapp:
+  nodeapp-1:
     build:
       context: .
-      dockerfile: Dockerfile 
-    container_name: nodeapp
+      dockerfile: Dockerfile
+    container_name: nodeapp-1
     privileged: true
     ports:
-      - '${API_SERVER_PORT}:${API_SERVER_PORT}'
+      - '3001:${API_SERVER_PORT}'
     environment:
       API_SERVER_PORT: ${API_SERVER_PORT}
       KAFKA_GROUP_ID: ${KAFKA_GROUP_ID}
-      BATCH_SIZE: ${BATCH_SIZE}
       WORKER_TIMEOUT: ${WORKER_TIMEOUT}
-      MASTER_ID: ${MASTER_ID}
+      MASTER_ID: master-1
       KAFKA_BROKER_ADDRESS: ${KAFKA_BROKER_ADDRESS}
       KAFKA_BROKER_PORT: ${KAFKA_BROKER_PORT}
       KAFKA_TOPIC_NAME_WORKER: ${KAFKA_TOPIC_NAME_WORKER}
@@ -59,10 +59,72 @@ services:
       CLIENT_DATA_PATH: ${CLIENT_DATA_PATH}
     depends_on:
       - redis
-    # volumes:
-    #   - ./input_ip_data:${CLIENT_DATA_PATH}/input
+    volumes:
+      - ./logs:/app/logs
     networks:
       - backend
+
+  # nodeapp-2:
+  #   build:
+  #     context: .
+  #     dockerfile: Dockerfile
+  #   container_name: nodeapp-2
+  #   privileged: true
+  #   ports:
+  #     - '3002:${API_SERVER_PORT}'
+  #   environment:
+  #     API_SERVER_PORT: ${API_SERVER_PORT}
+  #     KAFKA_GROUP_ID: ${KAFKA_GROUP_ID}
+  #     WORKER_TIMEOUT: ${WORKER_TIMEOUT}
+  #     MASTER_ID: master-2
+  #     KAFKA_BROKER_ADDRESS: ${KAFKA_BROKER_ADDRESS}
+  #     KAFKA_BROKER_PORT: ${KAFKA_BROKER_PORT}
+  #     KAFKA_TOPIC_NAME_WORKER: ${KAFKA_TOPIC_NAME_WORKER}
+  #     KAFKA_TOPIC_NAME_MASTER: ${KAFKA_TOPIC_NAME_MASTER}
+  #     KAFKA_TOPIC_NAME_WORKER_FREE: ${KAFKA_TOPIC_NAME_WORKER_FREE}
+  #     KAFKA_MASTER_HEARTBEAT_TOPIC: ${KAFKA_MASTER_HEARTBEAT_TOPIC}
+  #     SMB_HOST: ${SMB_HOST}
+  #     SMB_USER: ${SMB_USER}
+  #     SMB_PASSWORD: ${SMB_PASSWORD}
+  #     SMB_PORT: ${SMB_PORT}
+  #     CLIENT_DATA_PATH: ${CLIENT_DATA_PATH}
+  #   depends_on:
+  #     - redis
+  #   volumes:
+  #     - ./logs:/app/logs
+  #   networks:
+  #     - backend
+
+  # nodeapp-3:
+  #   build:
+  #     context: .
+  #     dockerfile: Dockerfile
+  #   container_name: nodeapp-3
+  #   privileged: true
+  #   ports:
+  #     - '3003:${API_SERVER_PORT}'
+  #   environment:
+  #     API_SERVER_PORT: ${API_SERVER_PORT}
+  #     KAFKA_GROUP_ID: ${KAFKA_GROUP_ID}
+  #     WORKER_TIMEOUT: ${WORKER_TIMEOUT}
+  #     MASTER_ID: master-3
+  #     KAFKA_BROKER_ADDRESS: ${KAFKA_BROKER_ADDRESS}
+  #     KAFKA_BROKER_PORT: ${KAFKA_BROKER_PORT}
+  #     KAFKA_TOPIC_NAME_WORKER: ${KAFKA_TOPIC_NAME_WORKER}
+  #     KAFKA_TOPIC_NAME_MASTER: ${KAFKA_TOPIC_NAME_MASTER}
+  #     KAFKA_TOPIC_NAME_WORKER_FREE: ${KAFKA_TOPIC_NAME_WORKER_FREE}
+  #     KAFKA_MASTER_HEARTBEAT_TOPIC: ${KAFKA_MASTER_HEARTBEAT_TOPIC}
+  #     SMB_HOST: ${SMB_HOST}
+  #     SMB_USER: ${SMB_USER}
+  #     SMB_PASSWORD: ${SMB_PASSWORD}
+  #     SMB_PORT: ${SMB_PORT}
+  #     CLIENT_DATA_PATH: ${CLIENT_DATA_PATH}
+  #   depends_on:
+  #     - redis
+  #   volumes:
+  #     - ./logs:/app/logs
+  #   networks:
+  #     - backend
 
 networks:
   backend:
