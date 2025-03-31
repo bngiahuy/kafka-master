@@ -27,11 +27,11 @@ await admin
 				numPartitions: 1,
 				replicationFactor: 1,
 			},
-			{
-				topic: process.env.KAFKA_MASTER_HEARTBEAT_TOPIC,
-				numPartitions: 5, // Tương ứng với số master instances
-				replicationFactor: 1,
-			},
+			// {
+			// 	topic: process.env.KAFKA_MASTER_HEARTBEAT_TOPIC,
+			// 	numPartitions: 5, // Tương ứng với số master instances
+			// 	replicationFactor: 1,
+			// },
 		],
 	})
 	.then(async (result) => {
