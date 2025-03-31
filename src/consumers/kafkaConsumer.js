@@ -12,8 +12,9 @@ const consumer = kafka.consumer({
 		initialRetryTime: 100,
 		retries: 8,
 	},
-	sessionTimeout: 30000,
-	heartbeatInterval: 3000,
+	sessionTimeout: 60000,
+	heartbeatInterval: 10000,
+	rebalanceTimeout: 60000,
 });
 
 // --- Worker Timeout Check --- (Giữ nguyên hoặc cải tiến nếu cần)
@@ -132,8 +133,6 @@ export const runConsumer = async () => {
 
 
 		await consumer.run({
-			// Để giảm số lượng message xử lý đồng thời, bạn có thể thay đổi giá trị này
-			// partitionsConsumedConcurrently: 10, // Điều chỉnh dựa trên giới hạn API
 			eachMessage: async ({ topic, partition, message }) => {
 				console.log(`\n📩 Received message on topic "${topic}", partition ${partition}`);
 				let data = JSON.parse(message.value.toString());

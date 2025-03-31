@@ -302,7 +302,7 @@ const sendChunkToKafka = async (workerId, batchId, ipList, partition) => {
 			messages: [
 				{
 					key: workerId,
-					partition,
+					partition: partition,
 					value: JSON.stringify({
 						id: workerId,
 						batchId: batchId,
