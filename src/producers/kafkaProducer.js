@@ -9,7 +9,7 @@ import { acquireLock, releaseLock } from '../utils/helper.js';
 
 const producer = kafka.producer();
 
-const BATCH_DIR = './input_ip_data';
+const BATCH_DIR = process.env.CLIENT_DATA_PATH + '/input';
 const PROCESSED_FILES_KEY = 'processed:files'; // Key cho Redis Set
 const CHECK_INTERVAL = 5000; // Kiểm tra file mới mỗi 5 giây (5000ms)
 const WORKER_POLL_INTERVAL = 100;

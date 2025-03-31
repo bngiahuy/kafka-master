@@ -19,7 +19,6 @@ kafka-master/
 │   ├── services/        # Business logic services
 │   ├── utils/           # Utility functions and helpers
 │   └── index.js         # Application entry point
-├── input_ip_data/       # Batch data files for processing
 └── package.json         # Project dependencies
 ```
 
@@ -44,32 +43,37 @@ kafka-master/
 The system uses environment variables for configuration:
 
 ```
-# API Server
-API_SERVER_PORT=3001
-
-# Kafka Configuration
-KAFKA_BROKER_ADDRESS=localhost
-KAFKA_BROKER_PORT=9092
-KAFKA_TOPIC_NAME_WORKER=worker-signal      # Workers -> Master (results)
-KAFKA_TOPIC_NAME_MASTER=master-signal      # Master -> Workers (assignments)
-KAFKA_TOPIC_NAME_WORKER_FREE=worker-connection  # Workers -> Master (registration)
+KAFKA_BROKER_ADDRESS= # The IP address of the Kafka broker, necessary for connecting to Kafka
+KAFKA_BROKER_PORT= # The port on which the Kafka broker is listening, typically 9092
+API_SERVER_PORT= # The port that the API server will use to listen for requests
+MASTER_ID= # A unique identifier for the master node in the system
+KAFKA_GROUP_ID= # The ID of the Kafka group, used to manage consumers within the same group
+BATCH_SIZE= # The number of data items in each batch that a worker will process
+WORKER_TIMEOUT= # The maximum time (in seconds) a worker can be unresponsive before being considered failed
+SMB_HOST= # The IP address of the SMB server, used for connecting and sharing data
+SMB_USER= # The username for authentication when connecting to the SMB server
+SMB_PASSWORD= # The password for authentication when connecting to the SMB server
+SMB_PORT= # The port that the SMB server is using
+CLIENT_DATA_PATH= # The path to the client's data directory, where data to be processed is stored
+KAFKA_MASTER_HEARTBEAT_TOPIC= # The name of the Kafka topic used for sending heartbeat signals from the master
+KAFKA_TOPIC_NAME_WORKER= # The name of the Kafka topic that workers use to send signals
+KAFKA_TOPIC_NAME_MASTER= # The name of the Kafka topic that the master uses to send signals
+KAFKA_TOPIC_NAME_WORKER_FREE= # The name of the Kafka topic that workers use to announce their availability
 ```
 
 ## API Endpoints
 
 * **GET /api/getWorkersStatus**: View current worker status
 * **GET /api/getNumBatches**: Get current batch size setting
-* **GET /api/updateNumBatches?numBatches=N**: Update batch size configuration
+* **GET /api/updateNumBatches?numBatches=<integer>**: Update batch size configuration
 * **GET /api/getPartitions**: Get Kafka partition information
-* **GET /api/updatePartitions?value=N**: Update Kafka partition number (supports only master-signal topic).
+* **GET /api/updatePartitions?value=<integer>**: Update Kafka partition number (supports only master-signal topic).
 
 ## Running the System
-- Create a folder named `input_ip_data` inside the project folder.
 - Create `.env` file and its content.
 - Use docker-compose to run the program.
 ```bash
 # Using docker-compose
-docker-compose up -d
+docker-compose build && docker-compose up -d
 ```
-- Wait a few seconds for kafka-workers registration successfully, then you can add .txt files into `input_ip_data` folder.
 - You can use some API Endpoints above to monitor.
